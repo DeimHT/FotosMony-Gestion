@@ -12,6 +12,7 @@ import {
   Briefcase,
   MessageSquare,
   FileImage,
+  Lightbulb,
   X,
   ChevronRight,
 } from "lucide-react";
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
   { href: "/servicios", label: "Servicios", icon: Briefcase },
   { href: "/mensajes", label: "Mensajes", icon: MessageSquare },
   { href: "/contenido", label: "Contenido Web", icon: FileImage },
+  { href: "/sugerencias", label: "Sugerencias", icon: Lightbulb },
 ];
 
 interface SidebarProps {

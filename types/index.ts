@@ -156,6 +156,19 @@ export interface VentaPresencialItem {
   created_at: string;
 }
 
+export interface Sugerencia {
+  id: string;
+  titulo: string;
+  descripcion: string;
+  categoria: "general" | "interfaz" | "funcionalidad" | "rendimiento" | "correccion" | "otro";
+  prioridad: "baja" | "media" | "alta";
+  estado: "pendiente" | "en_revision" | "planificado" | "implementado" | "descartado";
+  autor_nombre: string | null;
+  notas_desarrollador: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Derived / joined types ────────────────────────────────────────────────
 
 export interface OrderWithItems extends Order {

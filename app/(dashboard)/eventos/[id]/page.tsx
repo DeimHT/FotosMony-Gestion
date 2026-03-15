@@ -12,6 +12,7 @@ import {
   Layers,
 } from "lucide-react";
 import FotoThumb from "@/components/eventos/FotoThumb";
+import EventoEditModal from "@/components/eventos/EventoEditModal";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -126,6 +127,11 @@ export default async function EventoDetailPage({ params, searchParams }: PagePro
             </a>
           </div>
         </div>
+        <EventoEditModal
+          eventoId={evento.id}
+          eventoNombre={evento.nombre}
+          subEventos={(subEventos ?? []).map((s) => ({ id: s.id, nombre: s.nombre }))}
+        />
       </div>
 
       {/* Stats */}

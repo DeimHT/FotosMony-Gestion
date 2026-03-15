@@ -1,25 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Menu, LogOut, User, Bell, ExternalLink } from "lucide-react";
+import { Menu, LogOut, User, ExternalLink } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getInitials } from "@/lib/utils";
 import { useState } from "react";
-import Link from "next/link";
+import NotificationBell from "./NotificationBell";
 
 interface HeaderProps {
   onMenuClick: () => void;
   userName?: string;
   userEmail?: string;
-  unreadMessages?: number;
 }
 
-export default function Header({
-  onMenuClick,
-  userName,
-  userEmail,
-  unreadMessages = 0,
-}: HeaderProps) {
+export default function Header({ onMenuClick, userName, userEmail }: HeaderProps) {
   const router = useRouter();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
@@ -50,7 +44,6 @@ export default function Header({
         <Menu size={20} />
       </button>
 
-      {/* Center: breadcrumb placeholder — páginas usan su propio título */}
       <div className="hidden lg:block" />
 
       {/* Right: actions */}
@@ -61,31 +54,14 @@ export default function Header({
           target="_blank"
           rel="noopener noreferrer"
           className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-          style={{
-            color: "var(--text-muted)",
-            border: "1px solid var(--border)",
-          }}
+          style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
         >
           <ExternalLink size={12} />
           Ver sitio web
         </a>
 
-        {/* Notifications */}
-        <Link
-          href="/mensajes"
-          className="relative p-1.5 rounded-lg transition-colors"
-          style={{ color: "var(--text-secondary)" }}
-        >
-          <Bell size={18} />
-          {unreadMessages > 0 && (
-            <span
-              className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center"
-              style={{ background: "var(--accent)", color: "#0D0D14" }}
-            >
-              {unreadMessages > 9 ? "9+" : unreadMessages}
-            </span>
-          )}
-        </Link>
+        {/* Notification bell with dropdown */}
+        <NotificationBell />
 
         {/* User menu */}
         <div className="relative">
@@ -107,21 +83,12 @@ export default function Header({
 
           {userMenuOpen && (
             <>
-              <div
-                className="fixed inset-0 z-10"
-                onClick={() => setUserMenuOpen(false)}
-              />
+              <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
               <div
                 className="absolute right-0 top-full mt-1 w-56 rounded-xl shadow-xl z-20 py-1"
-                style={{
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                }}
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
               >
-                <div
-                  className="px-4 py-3"
-                  style={{ borderBottom: "1px solid var(--border)" }}
-                >
+                <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--border)" }}>
                   <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
                     {displayName}
                   </p>
