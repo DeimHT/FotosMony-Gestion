@@ -27,6 +27,7 @@ import {
   Loader2,
   Clock,
   User,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -99,6 +100,7 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
   const [clienteEmail, setClienteEmail] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  const [ubicacion, setUbicacion] = useState("");
   const [notas, setNotas] = useState("");
   const [estado, setEstado] = useState("pendiente");
 
@@ -119,6 +121,7 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
     setClienteEmail("");
     setFechaInicio(date ? format(date, "yyyy-MM-dd'T'09:00") : "");
     setFechaFin(date ? format(date, "yyyy-MM-dd'T'10:00") : "");
+    setUbicacion("");
     setNotas("");
     setEstado("pendiente");
     setError(null);
@@ -133,6 +136,7 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
     setClienteEmail(item.cliente_email || "");
     setFechaInicio(item.fecha_inicio.slice(0, 16));
     setFechaFin(item.fecha_fin?.slice(0, 16) || "");
+    setUbicacion(item.ubicacion || "");
     setNotas(item.notas || "");
     setEstado(item.estado);
     setError(null);
@@ -154,6 +158,7 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
       cliente_email: clienteEmail.trim() || null,
       fecha_inicio: new Date(fechaInicio).toISOString(),
       fecha_fin: fechaFin ? new Date(fechaFin).toISOString() : null,
+      ubicacion: ubicacion.trim() || null,
       notas: notas.trim() || null,
       estado,
     };
@@ -355,6 +360,14 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
                       </span>
                     </div>
                   )}
+                  {item.ubicacion && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <MapPin size={11} style={{ color: "var(--text-muted)" }} />
+                      <span className="text-xs truncate" style={{ color: "var(--text-muted)" }}>
+                        {item.ubicacion}
+                      </span>
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -438,6 +451,19 @@ export default function AgendaClient({ initialItems, serviciosAgendables }: Agen
                     className="input-field"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>
+                  Ubicación / Lugar
+                </label>
+                <input
+                  type="text"
+                  value={ubicacion}
+                  onChange={(e) => setUbicacion(e.target.value)}
+                  className="input-field"
+                  placeholder="Ej: Estudio, Parque O'Higgins, Casa cliente..."
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

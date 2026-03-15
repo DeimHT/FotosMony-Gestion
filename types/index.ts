@@ -130,6 +130,7 @@ export interface AgendaItem {
   cliente_email: string | null;
   fecha_inicio: string;
   fecha_fin: string | null;
+  ubicacion: string | null;
   notas: string | null;
   estado: "pendiente" | "confirmado" | "cancelado" | "completado";
   created_at: string;
