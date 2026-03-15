@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { formatCLP, formatDateTime } from "@/lib/utils";
 import Link from "next/link";
-import { ShoppingBag, Plus, TrendingUp } from "lucide-react";
+import { ShoppingBag, Plus, TrendingUp, AlertCircle } from "lucide-react";
 import { startOfMonth } from "date-fns";
 
 export default async function VentasPage() {
@@ -22,10 +22,12 @@ export default async function VentasPage() {
 
   const totalMes = (ventasMes ?? []).reduce((s, v) => s + v.total_clp, 0);
   const totalHistorico = (ventas ?? []).reduce((s, v) => s + v.total_clp, 0);
+  const ventasFiado = (ventas ?? []).filter((v) => v.estado === "fiado");
+  const totalFiado = ventasFiado.reduce((s, v) => s + v.total_clp, 0);
 
   const metodoPago: Record<string, number> = {};
   (ventas ?? []).forEach((v) => {
-    metodoPago[v.metodo_pago] = (metodoPago[v.metodo_pago] || 0) + 1;
+    if (v.estado !== "fiado") metodoPago[v.metodo_pago] = (metodoPago[v.metodo_pago] || 0) + 1;
   });
 
   const metodosLabels: Record<string, string> = {
@@ -55,7 +57,7 @@ export default async function VentasPage() {
       </div>
 
       {/* Summary stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           {
             label: "Ingresos este mes",
@@ -74,6 +76,12 @@ export default async function VentasPage() {
             value: formatCLP(totalHistorico),
             icon: ShoppingBag,
             color: "var(--success)",
+          },
+          {
+            label: "Deudas al fiado",
+            value: ventasFiado.length > 0 ? `${formatCLP(totalFiado)} (${ventasFiado.length})` : "Sin deudas",
+            icon: AlertCircle,
+            color: ventasFiado.length > 0 ? "var(--danger)" : "var(--text-muted)",
           },
         ].map((stat) => (
           <div
@@ -103,7 +111,7 @@ export default async function VentasPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)", background: "rgba(0,0,0,0.2)" }}>
-                  {["Cliente", "Total", "Método de pago", "Fecha", ""].map((h) => (
+                  {["Cliente", "Total", "Estado", "Método de pago", "Fecha", ""].map((h) => (
                     <th
                       key={h}
                       className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider"
@@ -131,13 +139,25 @@ export default async function VentasPage() {
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-bold" style={{ color: "var(--accent)" }}>
+                    <td className="px-4 py-3 font-bold" style={{ color: venta.estado === "fiado" ? "var(--danger)" : "var(--accent)" }}>
                       {formatCLP(venta.total_clp)}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="badge badge-blue">
-                        {metodosLabels[venta.metodo_pago] || venta.metodo_pago}
-                      </span>
+                      {venta.estado === "fiado" ? (
+                        <span className="badge badge-red flex items-center gap-1 w-fit">
+                          <AlertCircle size={10} />
+                          Fiado
+                        </span>
+                      ) : (
+                        <span className="badge badge-green">Pagado</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {venta.estado !== "fiado" && (
+                        <span className="badge badge-blue">
+                          {metodosLabels[venta.metodo_pago] || venta.metodo_pago}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: "var(--text-muted)" }}>
                       {formatDateTime(venta.created_at)}

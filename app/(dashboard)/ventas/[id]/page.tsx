@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import { formatCLP, formatDateTime } from "@/lib/utils";
 import Link from "next/link";
-import { ArrowLeft, ShoppingBag, User, Mail, Package } from "lucide-react";
+import { ArrowLeft, ShoppingBag, User, Mail, Package, AlertCircle, CheckCircle } from "lucide-react";
+import MarcarPagadoButton from "@/components/ventas/MarcarPagadoButton";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -43,7 +44,7 @@ export default async function VentaDetailPage({ params }: PageProps) {
           <ArrowLeft size={15} />
           Volver a ventas
         </Link>
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
               <ShoppingBag size={20} style={{ color: "var(--accent)" }} />
@@ -53,10 +54,36 @@ export default async function VentaDetailPage({ params }: PageProps) {
               {formatDateTime(venta.created_at)}
             </p>
           </div>
-          <span className="badge badge-blue text-sm px-3 py-1">
-            {metodosLabels[venta.metodo_pago] || venta.metodo_pago}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {venta.estado === "fiado" ? (
+              <span
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold"
+                style={{ background: "rgba(239,68,68,0.12)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.3)" }}
+              >
+                <AlertCircle size={14} />
+                Fiado — deuda pendiente
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-bold"
+                style={{ background: "rgba(34,197,94,0.1)", color: "#22C55E", border: "1px solid rgba(34,197,94,0.3)" }}
+              >
+                <CheckCircle size={14} />
+                Pagado
+              </span>
+            )}
+            {venta.estado !== "fiado" && (
+              <span className="badge badge-blue">
+                {metodosLabels[venta.metodo_pago] || venta.metodo_pago}
+              </span>
+            )}
+          </div>
         </div>
+
+        {/* Botón marcar como pagado */}
+        {venta.estado === "fiado" && (
+          <MarcarPagadoButton ventaId={venta.id} />
+        )}
       </div>
 
       <div className="card space-y-3">

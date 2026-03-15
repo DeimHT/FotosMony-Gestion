@@ -7,16 +7,15 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import {
   Users,
   Plus,
-  Pencil,
   X,
   Loader2,
   ShoppingCart,
   ShoppingBag,
   Search,
-  Phone,
-  Mail,
-  StickyNote,
   Check,
+  Save,
+  UserPlus,
+  AlertCircle,
 } from "lucide-react";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -40,6 +39,7 @@ interface VentaRow {
   cliente_nombre: string | null;
   cliente_email: string | null;
   total_clp: number;
+  estado: string;
   created_at: string;
 }
 
@@ -48,6 +48,7 @@ interface ClientesClientProps {
   profiles: ProfileRow[];
   orders: OrderRow[];
   ventas: VentaRow[];
+  emailMap: Record<string, string>;
 }
 
 // ─── Unified client view ──────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ interface ClienteVista {
   telefono: string;
   compras: number;
   totalGastado: number;
+  deudaFiado: number; // total de ventas con estado "fiado"
   tipo: "web" | "presencial" | "gestion";
   fechaRegistro: string;
   dbId?: string; // only for "gestion" type
@@ -75,6 +77,7 @@ export default function ClientesClient({
   profiles,
   orders,
   ventas,
+  emailMap,
 }: ClientesClientProps) {
   const [clientes, setClientes] = useState<Cliente[]>(initialClientes);
   const [busqueda, setBusqueda] = useState("");
@@ -87,43 +90,50 @@ export default function ClientesClient({
   const [saved, setSaved] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState<ClienteVista | null>(null);
 
+  // Panel de edición inline (derecha)
+  const [panelForm, setPanelForm] = useState(EMPTY_FORM);
+  const [panelEditing, setPanelEditing] = useState(false);   // true = mostrando form editable
+  const [panelLoading, setPanelLoading] = useState(false);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [panelSaved, setPanelSaved] = useState(false);
+
   // ── Build unified list ──────────────────────────────────────────────────────
 
   const webVistas: ClienteVista[] = profiles.map((p) => {
     const userOrders = orders.filter((o) => o.user_id === p.id && o.status === "paid");
+    const email = emailMap[p.id] ?? "";
     return {
       id: `web-${p.id}`,
-      nombre: p.full_name || "Sin nombre",
-      email: "",
+      nombre: p.full_name || email.split("@")[0] || "Sin nombre",
+      email,
       telefono: p.phone || "",
       compras: userOrders.length,
       totalGastado: userOrders.reduce((s, o) => s + o.total_clp, 0),
+      deudaFiado: 0,
       tipo: "web",
       fechaRegistro: p.created_at,
     };
   });
 
-  const gestionVistas: ClienteVista[] = clientes.map((c) => ({
-    id: `gest-${c.id}`,
-    nombre: c.nombre,
-    email: c.email || "",
-    telefono: c.telefono || "",
-    compras: ventas.filter(
+  const gestionVistas: ClienteVista[] = clientes.map((c) => {
+    const ventasCliente = ventas.filter(
       (v) =>
         v.cliente_email === c.email ||
         v.cliente_nombre?.toLowerCase() === c.nombre.toLowerCase()
-    ).length,
-    totalGastado: ventas
-      .filter(
-        (v) =>
-          v.cliente_email === c.email ||
-          v.cliente_nombre?.toLowerCase() === c.nombre.toLowerCase()
-      )
-      .reduce((s, v) => s + v.total_clp, 0),
-    tipo: "gestion",
-    fechaRegistro: c.created_at,
-    dbId: c.id,
-  }));
+    );
+    return {
+      id: `gest-${c.id}`,
+      nombre: c.nombre,
+      email: c.email || "",
+      telefono: c.telefono || "",
+      compras: ventasCliente.length,
+      totalGastado: ventasCliente.reduce((s, v) => s + v.total_clp, 0),
+      deudaFiado: ventasCliente.filter((v) => v.estado === "fiado").reduce((s, v) => s + v.total_clp, 0),
+      tipo: "gestion",
+      fechaRegistro: c.created_at,
+      dbId: c.id,
+    };
+  });
 
   // Presential clients from ventas not in gestion list
   const gestionEmails = new Set(clientes.map((c) => c.email?.toLowerCase()).filter(Boolean));
@@ -138,20 +148,22 @@ export default function ClientesClient({
     )
       return;
     const existing = presMap.get(key);
-    if (existing) {
-      existing.compras += 1;
-      existing.totalGastado += v.total_clp;
+      if (existing) {
+        existing.compras += 1;
+        existing.totalGastado += v.total_clp;
+        if (v.estado === "fiado") existing.deudaFiado += v.total_clp;
     } else {
       presMap.set(key, {
-        id: `pres-${key}`,
-        nombre: v.cliente_nombre,
-        email: v.cliente_email || "",
-        telefono: "",
-        compras: 1,
-        totalGastado: v.total_clp,
-        tipo: "presencial",
-        fechaRegistro: v.created_at,
-      });
+          id: `pres-${key}`,
+          nombre: v.cliente_nombre,
+          email: v.cliente_email || "",
+          telefono: "",
+          compras: 1,
+          totalGastado: v.total_clp,
+          deudaFiado: v.estado === "fiado" ? v.total_clp : 0,
+          tipo: "presencial",
+          fechaRegistro: v.created_at,
+        });
     }
   });
   const presVistas = Array.from(presMap.values());
@@ -178,6 +190,77 @@ export default function ClientesClient({
     setSelectedCliente(null);
   }
 
+  // Seleccionar un cliente y abrir el panel lateral editable
+  function selectCliente(c: ClienteVista) {
+    if (selectedCliente?.id === c.id) {
+      setSelectedCliente(null);
+      setPanelEditing(false);
+      return;
+    }
+    setSelectedCliente(c);
+    setPanelError(null);
+    setPanelSaved(false);
+    // Pre-llenar panel con datos disponibles
+    const dbRecord = c.dbId ? clientes.find((x) => x.id === c.dbId) : null;
+    setPanelForm({
+      nombre: c.nombre,
+      email: c.email || "",
+      telefono: c.telefono || "",
+      notas: dbRecord?.notas || "",
+    });
+    // Abrir directamente en modo edición
+    setPanelEditing(true);
+  }
+
+  // Guardar desde el panel lateral
+  async function handlePanelSave() {
+    if (!selectedCliente) return;
+    if (!panelForm.nombre.trim()) {
+      setPanelError("El nombre es obligatorio");
+      return;
+    }
+    setPanelLoading(true);
+    setPanelError(null);
+    const supabase = createSupabaseClient();
+    const payload = {
+      nombre: panelForm.nombre.trim(),
+      email: panelForm.email.trim() || null,
+      telefono: panelForm.telefono.trim() || null,
+      notas: panelForm.notas.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (selectedCliente.tipo === "gestion" && selectedCliente.dbId) {
+      // Actualizar registro existente
+      const { data, error: err } = await supabase
+        .from("clientes")
+        .update(payload)
+        .eq("id", selectedCliente.dbId)
+        .select()
+        .single();
+      if (err) { setPanelError(err.message); setPanelLoading(false); return; }
+      setClientes(clientes.map((c) => (c.id === selectedCliente.dbId ? data : c)));
+    } else {
+      // Crear nuevo registro de gestión con los datos pre-llenados
+      const { data, error: err } = await supabase
+        .from("clientes")
+        .insert(payload)
+        .select()
+        .single();
+      if (err) { setPanelError(err.message); setPanelLoading(false); return; }
+      setClientes([data, ...clientes]);
+    }
+
+    setPanelSaved(true);
+    setPanelLoading(false);
+    setTimeout(() => {
+      setPanelSaved(false);
+      setPanelEditing(false);
+      setSelectedCliente(null);
+    }, 900);
+  }
+
+  // Mantener openEdit para el modal independiente (crear desde cero)
   function openEdit(c: ClienteVista) {
     if (c.tipo !== "gestion" || !c.dbId) return;
     const db = clientes.find((x) => x.id === c.dbId)!;
@@ -374,28 +457,37 @@ export default function ClientesClient({
                             ? "var(--accent-muted)"
                             : "transparent",
                       }}
-                      onClick={() =>
-                        setSelectedCliente(selectedCliente?.id === c.id ? null : c)
-                      }
+                      onClick={() => selectCliente(c)}
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div
                             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
                             style={{
-                              background: "var(--accent-muted)",
-                              color: "var(--accent)",
+                              background: c.deudaFiado > 0 ? "rgba(239,68,68,0.15)" : "var(--accent-muted)",
+                              color: c.deudaFiado > 0 ? "var(--danger)" : "var(--accent)",
                             }}
                           >
                             {getInitials(c.nombre)}
                           </div>
                           <div>
-                            <p
-                              className="font-medium"
-                              style={{ color: "var(--text-primary)" }}
-                            >
-                              {c.nombre}
-                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <p
+                                className="font-medium"
+                                style={{ color: "var(--text-primary)" }}
+                              >
+                                {c.nombre}
+                              </p>
+                              {c.deudaFiado > 0 && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                                  style={{ background: "rgba(239,68,68,0.12)", color: "var(--danger)" }}
+                                >
+                                  <AlertCircle size={9} />
+                                  Deudor
+                                </span>
+                              )}
+                            </div>
                             {c.email && (
                               <p
                                 className="text-xs"
@@ -430,20 +522,7 @@ export default function ClientesClient({
                       >
                         {formatDate(c.fechaRegistro)}
                       </td>
-                      <td className="px-4 py-3">
-                        {c.tipo === "gestion" && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEdit(c);
-                            }}
-                            className="p-1 rounded"
-                            style={{ color: "var(--text-muted)" }}
-                          >
-                            <Pencil size={13} />
-                          </button>
-                        )}
-                      </td>
+                      <td className="px-4 py-3" />
                     </tr>
                   ))}
                 </tbody>
@@ -464,122 +543,180 @@ export default function ClientesClient({
           </div>
         </div>
 
-        {/* Detail panel */}
+        {/* Panel lateral editable */}
         <div>
           {selectedCliente ? (
             <div className="card space-y-4">
+              {/* Encabezado del panel */}
               <div className="flex items-start justify-between">
-                <div
-                  className="w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold"
-                  style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-                >
-                  {getInitials(selectedCliente.nombre)}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {selectedCliente.tipo === "gestion" && (
-                    <button
-                      onClick={() => openEdit(selectedCliente)}
-                      className="btn-secondary text-xs px-2.5 py-1.5"
-                    >
-                      <Pencil size={12} />
-                      Editar
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setSelectedCliente(null)}
-                    style={{ color: "var(--text-muted)" }}
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-11 h-11 rounded-xl flex items-center justify-center text-base font-bold shrink-0"
+                    style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
                   >
-                    <X size={16} />
-                  </button>
+                    {getInitials(selectedCliente.nombre)}
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm leading-tight" style={{ color: "var(--text-primary)" }}>
+                      {selectedCliente.nombre}
+                    </p>
+                    <span className={`badge ${TIPO_BADGE[selectedCliente.tipo]} text-[10px] mt-0.5`}>
+                      {TIPO_LABEL[selectedCliente.tipo]}
+                    </span>
+                  </div>
                 </div>
-              </div>
-
-              <div>
-                <h3
-                  className="font-bold text-base"
-                  style={{ color: "var(--text-primary)" }}
+                <button
+                  onClick={() => { setSelectedCliente(null); setPanelEditing(false); }}
+                  style={{ color: "var(--text-muted)" }}
                 >
-                  {selectedCliente.nombre}
-                </h3>
-                <span className={`badge ${TIPO_BADGE[selectedCliente.tipo]} mt-1`}>
-                  {TIPO_LABEL[selectedCliente.tipo]}
-                </span>
+                  <X size={16} />
+                </button>
               </div>
 
-              <div className="space-y-2.5">
-                {selectedCliente.email && (
-                  <div className="flex items-center gap-2">
-                    <Mail size={13} style={{ color: "var(--text-muted)" }} />
-                    <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                      {selectedCliente.email}
-                    </span>
-                  </div>
-                )}
-                {selectedCliente.telefono && (
-                  <div className="flex items-center gap-2">
-                    <Phone size={13} style={{ color: "var(--text-muted)" }} />
-                    <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-                      {selectedCliente.telefono}
-                    </span>
-                  </div>
-                )}
-                {selectedCliente.tipo === "gestion" && (() => {
-                  const db = clientes.find((c) => c.id === selectedCliente.dbId);
-                  return db?.notas ? (
-                    <div className="flex items-start gap-2">
-                      <StickyNote size={13} className="mt-0.5" style={{ color: "var(--text-muted)" }} />
-                      <span
-                        className="text-sm whitespace-pre-wrap"
-                        style={{ color: "var(--text-secondary)" }}
-                      >
-                        {db.notas}
-                      </span>
-                    </div>
-                  ) : null;
-                })()}
-              </div>
-
-              <div
-                className="grid grid-cols-2 gap-3 pt-3"
-                style={{ borderTop: "1px solid var(--border)" }}
-              >
+              {/* Estadísticas */}
+              <div className="grid grid-cols-2 gap-2">
                 {[
-                  { label: "Compras", value: selectedCliente.compras },
+                  { label: "Compras", value: selectedCliente.compras, color: "var(--accent)" },
                   {
                     label: "Total gastado",
-                    value:
-                      selectedCliente.totalGastado > 0
-                        ? formatCLP(selectedCliente.totalGastado)
-                        : "—",
+                    value: selectedCliente.totalGastado > 0 ? formatCLP(selectedCliente.totalGastado) : "—",
+                    color: "var(--accent)",
                   },
                 ].map((s) => (
-                  <div key={s.label}>
-                    <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                      {s.label}
-                    </p>
-                    <p
-                      className="text-base font-bold"
-                      style={{ color: "var(--accent)" }}
-                    >
-                      {s.value}
-                    </p>
+                  <div
+                    key={s.label}
+                    className="rounded-lg px-3 py-2"
+                    style={{ background: "var(--bg-primary)" }}
+                  >
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{s.label}</p>
+                    <p className="text-base font-bold" style={{ color: s.color }}>{s.value}</p>
                   </div>
                 ))}
               </div>
-
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Registrado el {formatDate(selectedCliente.fechaRegistro)}
-              </p>
-
-              {selectedCliente.tipo === "gestion" && selectedCliente.dbId && (
-                <button
-                  onClick={() => handleDelete(selectedCliente.dbId!)}
-                  className="text-xs w-full text-center pt-1"
-                  style={{ color: "var(--danger)" }}
+              {selectedCliente.deudaFiado > 0 && (
+                <div
+                  className="flex items-center justify-between px-3 py-2.5 rounded-xl"
+                  style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}
                 >
-                  Eliminar cliente
-                </button>
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={14} style={{ color: "var(--danger)" }} />
+                    <span className="text-sm font-semibold" style={{ color: "var(--danger)" }}>
+                      Deuda al fiado
+                    </span>
+                  </div>
+                  <span className="text-sm font-bold" style={{ color: "var(--danger)" }}>
+                    {formatCLP(selectedCliente.deudaFiado)}
+                  </span>
+                </div>
               )}
+
+              {/* Formulario editable */}
+              <div
+                className="space-y-3 pt-3"
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
+                {selectedCliente.tipo !== "gestion" && (
+                  <div
+                    className="flex items-start gap-2 px-3 py-2 rounded-lg text-xs"
+                    style={{ background: "rgba(59,130,246,0.08)", color: "#60A5FA", border: "1px solid rgba(59,130,246,0.2)" }}
+                  >
+                    <UserPlus size={13} className="shrink-0 mt-0.5" />
+                    Al guardar se creará un registro de gestión con estos datos.
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+                    Nombre
+                  </label>
+                  <input
+                    type="text"
+                    value={panelForm.nombre}
+                    onChange={(e) => setPanelForm({ ...panelForm, nombre: e.target.value })}
+                    className="input-field text-sm py-1.5"
+                    disabled={panelLoading}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+                      Email
+                    </label>
+                    <input
+                      type="email"
+                      value={panelForm.email}
+                      onChange={(e) => setPanelForm({ ...panelForm, email: e.target.value })}
+                      className="input-field text-sm py-1.5"
+                      placeholder="email@ejemplo.com"
+                      disabled={panelLoading}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+                      Teléfono
+                    </label>
+                    <input
+                      type="tel"
+                      value={panelForm.telefono}
+                      onChange={(e) => setPanelForm({ ...panelForm, telefono: e.target.value })}
+                      className="input-field text-sm py-1.5"
+                      placeholder="+56 9 ..."
+                      disabled={panelLoading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: "var(--text-secondary)" }}>
+                    Notas
+                  </label>
+                  <textarea
+                    value={panelForm.notas}
+                    onChange={(e) => setPanelForm({ ...panelForm, notas: e.target.value })}
+                    className="input-field text-sm py-1.5 h-16 resize-none"
+                    placeholder="Observaciones, preferencias..."
+                    disabled={panelLoading}
+                  />
+                </div>
+
+                {panelError && (
+                  <p className="text-xs" style={{ color: "var(--danger)" }}>{panelError}</p>
+                )}
+
+                <button
+                  onClick={handlePanelSave}
+                  disabled={panelLoading || panelSaved}
+                  className="btn-primary w-full justify-center"
+                >
+                  {panelLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : panelSaved ? (
+                    <Check size={14} />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {panelSaved
+                    ? "Guardado"
+                    : selectedCliente.tipo === "gestion"
+                      ? "Guardar cambios"
+                      : "Guardar en gestión"}
+                </button>
+
+                {selectedCliente.tipo === "gestion" && selectedCliente.dbId && (
+                  <button
+                    onClick={() => handleDelete(selectedCliente.dbId!)}
+                    className="text-xs w-full text-center"
+                    style={{ color: "var(--danger)" }}
+                  >
+                    Eliminar cliente
+                  </button>
+                )}
+
+                <p className="text-[11px] text-center" style={{ color: "var(--text-muted)" }}>
+                  Registrado el {formatDate(selectedCliente.fechaRegistro)}
+                </p>
+              </div>
             </div>
           ) : (
             <div
@@ -588,7 +725,7 @@ export default function ClientesClient({
             >
               <div>
                 <Users size={28} className="mx-auto mb-2 opacity-20" />
-                <p className="text-sm">Selecciona un cliente para ver su detalle</p>
+                <p className="text-sm">Selecciona un cliente para editar su información</p>
               </div>
             </div>
           )}

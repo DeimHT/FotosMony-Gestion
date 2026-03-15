@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Service } from "@/types";
 import { formatCLP } from "@/lib/utils";
 import Link from "next/link";
-import { ArrowLeft, Plus, Trash2, Loader2, ShoppingBag } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Loader2, ShoppingBag, AlertCircle } from "lucide-react";
 import ClienteSelector, { ClienteSeleccionado } from "@/components/clientes/ClienteSelector";
 
 interface LineItem {
@@ -26,6 +26,7 @@ export default function NuevaVentaPage() {
   const router = useRouter();
   const [cliente, setCliente] = useState<ClienteSeleccionado>({ nombre: "", email: "" });
   const [metodoPago, setMetodoPago] = useState("efectivo");
+  const [esfiado, setEsFiado] = useState(false);
   const [notas, setNotas] = useState("");
   const [items, setItems] = useState<LineItem[]>([
     { servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
@@ -99,6 +100,7 @@ export default function NuevaVentaPage() {
         cliente_email: cliente.email.trim() || null,
         total_clp: total,
         metodo_pago: metodoPago,
+        estado: esfiado ? "fiado" : "pagado",
         notas: notas.trim() || null,
       })
       .select()
@@ -280,28 +282,62 @@ export default function NuevaVentaPage() {
 
         {/* Payment method & notes */}
         <div className="card space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-2" style={{ color: "var(--text-secondary)" }}>
-              Método de pago
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {METODOS.map((m) => (
-                <button
-                  key={m.value}
-                  type="button"
-                  onClick={() => setMetodoPago(m.value)}
-                  className="px-3 py-2 rounded-lg text-sm font-medium transition-all"
-                  style={{
-                    background: metodoPago === m.value ? "var(--accent-muted)" : "var(--bg-primary)",
-                    color: metodoPago === m.value ? "var(--accent)" : "var(--text-secondary)",
-                    border: metodoPago === m.value ? "1px solid rgba(232,184,75,0.3)" : "1px solid var(--border)",
-                  }}
-                >
-                  {m.label}
-                </button>
-              ))}
+          {/* Fiado toggle */}
+          <button
+            type="button"
+            onClick={() => setEsFiado(!esfiado)}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all"
+            style={{
+              background: esfiado ? "rgba(239,68,68,0.08)" : "var(--bg-primary)",
+              border: esfiado ? "1px solid rgba(239,68,68,0.35)" : "1px solid var(--border)",
+            }}
+          >
+            <div className="flex items-center gap-2.5">
+              <AlertCircle size={16} style={{ color: esfiado ? "var(--danger)" : "var(--text-muted)" }} />
+              <div className="text-left">
+                <p className="text-sm font-semibold" style={{ color: esfiado ? "var(--danger)" : "var(--text-secondary)" }}>
+                  Dar al fiado
+                </p>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {esfiado ? "Esta venta quedará como deuda pendiente del cliente" : "El cliente pagará después"}
+                </p>
+              </div>
             </div>
-          </div>
+            <div
+              className="w-10 h-5 rounded-full transition-all relative shrink-0"
+              style={{ background: esfiado ? "var(--danger)" : "var(--border)" }}
+            >
+              <div
+                className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
+                style={{ left: esfiado ? "calc(100% - 18px)" : "2px" }}
+              />
+            </div>
+          </button>
+
+          {!esfiado && (
+            <div>
+              <label className="block text-sm font-medium mb-2" style={{ color: "var(--text-secondary)" }}>
+                Método de pago
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {METODOS.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setMetodoPago(m.value)}
+                    className="px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                    style={{
+                      background: metodoPago === m.value ? "var(--accent-muted)" : "var(--bg-primary)",
+                      color: metodoPago === m.value ? "var(--accent)" : "var(--text-secondary)",
+                      border: metodoPago === m.value ? "1px solid rgba(232,184,75,0.3)" : "1px solid var(--border)",
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>

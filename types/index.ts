@@ -142,6 +142,7 @@ export interface VentaPresencial {
   cliente_email: string | null;
   total_clp: number;
   metodo_pago: "efectivo" | "transferencia" | "debito" | "credito";
+  estado: "pagado" | "fiado";
   notas: string | null;
   agenda_id: string | null;
   created_at: string;

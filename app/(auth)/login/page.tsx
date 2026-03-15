@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Camera, Eye, EyeOff, Loader2 } from "lucide-react";
@@ -12,7 +12,8 @@ const OAUTH_ERRORS: Record<string, string> = {
   no_user: "No se pudo identificar al usuario. Intenta de nuevo.",
 };
 
-export default function LoginPage() {
+// Componente interno que usa useSearchParams (requiere Suspense boundary)
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -246,5 +247,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }
