@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import { formatCLP, formatDateTime } from "@/lib/utils";
 import Link from "next/link";
-import { ArrowLeft, TrendingDown, Tag, CreditCard, FileText } from "lucide-react";
+import { ArrowLeft, TrendingDown, Tag, CreditCard, FileText, Pencil } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -57,9 +57,23 @@ export default async function EgresoDetailPage({ params }: PageProps) {
               {formatDateTime(egreso.created_at)}
             </p>
           </div>
-          <span className="text-2xl font-bold" style={{ color: "var(--danger)" }}>
-            {formatCLP(egreso.monto_clp)}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-2xl font-bold" style={{ color: "var(--danger)" }}>
+              {formatCLP(egreso.monto_clp)}
+            </span>
+            <Link
+              href={`/egresos/${egreso.id}/editar`}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{
+                background: "var(--accent-muted)",
+                color: "var(--accent)",
+                border: "1px solid rgba(232,184,75,0.2)",
+              }}
+            >
+              <Pencil size={14} />
+              Editar
+            </Link>
+          </div>
         </div>
       </div>
 

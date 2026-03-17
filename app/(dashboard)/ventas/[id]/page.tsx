@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import { formatCLP, formatDateTime } from "@/lib/utils";
 import Link from "next/link";
-import { ArrowLeft, ShoppingBag, User, Mail, Package, AlertCircle, CheckCircle } from "lucide-react";
+import { ArrowLeft, ShoppingBag, User, Mail, Package, AlertCircle, CheckCircle, Pencil } from "lucide-react";
 import MarcarPagadoButton from "@/components/ventas/MarcarPagadoButton";
 
 interface PageProps {
@@ -77,6 +77,18 @@ export default async function VentaDetailPage({ params }: PageProps) {
                 {metodosLabels[venta.metodo_pago] || venta.metodo_pago}
               </span>
             )}
+            <Link
+              href={`/ventas/${venta.id}/editar`}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{
+                background: "var(--accent-muted)",
+                color: "var(--accent)",
+                border: "1px solid rgba(232,184,75,0.2)",
+              }}
+            >
+              <Pencil size={14} />
+              Editar
+            </Link>
           </div>
         </div>
 
