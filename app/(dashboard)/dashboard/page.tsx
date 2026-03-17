@@ -3,12 +3,14 @@ import {
   DollarSign,
   ShoppingCart,
   ShoppingBag,
+  TrendingDown,
   MessageSquare,
   Camera,
   Users,
   Clock,
   CheckCircle,
   XCircle,
+  Scale,
 } from "lucide-react";
 import StatsCard from "@/components/dashboard/StatsCard";
 import SalesChartWrapper from "@/components/dashboard/SalesChartWrapper";
@@ -42,6 +44,8 @@ export default async function DashboardPage() {
     { count: pendingOrders },
     { data: ventasThisMonth },
     { data: ventasLastMonth },
+    { data: egresosThisMonth },
+    { data: egresosLastMonth },
     { count: unreadMessages },
     { count: totalEventos },
     { count: totalClientes },
@@ -71,6 +75,15 @@ export default async function DashboardPage() {
     supabase
       .from("ventas_presenciales")
       .select("total_clp")
+      .gte("created_at", startLastMonth)
+      .lt("created_at", endLastMonth),
+    supabase
+      .from("egresos")
+      .select("monto_clp")
+      .gte("created_at", startThisMonth),
+    supabase
+      .from("egresos")
+      .select("monto_clp")
       .gte("created_at", startLastMonth)
       .lt("created_at", endLastMonth),
     supabase
@@ -108,6 +121,14 @@ export default async function DashboardPage() {
     ingresosPrevMes > 0
       ? Math.round(((ingresosTotalMes - ingresosPrevMes) / ingresosPrevMes) * 100)
       : 0;
+
+  const egresosMes = (egresosThisMonth ?? []).reduce((s, e) => s + e.monto_clp, 0);
+  const egresosPrevMes = (egresosLastMonth ?? []).reduce((s, e) => s + e.monto_clp, 0);
+  const trendEgresos =
+    egresosPrevMes > 0
+      ? Math.round(((egresosMes - egresosPrevMes) / egresosPrevMes) * 100)
+      : 0;
+  const balanceMes = ingresosTotalMes - egresosMes;
 
   // ── Build weekly chart data ──
   const weeks = eachWeekOfInterval({
@@ -149,6 +170,22 @@ export default async function DashboardPage() {
       trend: trendIngresos,
       trendLabel: "vs mes anterior",
       color: "var(--accent)",
+    },
+    {
+      title: "Egresos del mes",
+      value: formatCLP(egresosMes),
+      subtitle: `${(egresosThisMonth ?? []).length} gastos registrados`,
+      icon: TrendingDown,
+      trend: egresosPrevMes > 0 ? trendEgresos : undefined,
+      trendLabel: "vs mes anterior",
+      color: "var(--danger)",
+    },
+    {
+      title: "Balance del mes",
+      value: formatCLP(balanceMes),
+      subtitle: balanceMes >= 0 ? "Ingresos − Egresos" : "Pérdida",
+      icon: Scale,
+      color: balanceMes >= 0 ? "var(--success)" : "var(--danger)",
     },
     {
       title: "Pedidos pendientes",
@@ -250,6 +287,12 @@ export default async function DashboardPage() {
                 total: ingresosTotalMes,
                 color: "var(--info)",
               },
+              {
+                label: "Egresos",
+                amount: egresosMes,
+                total: Math.max(ingresosTotalMes, egresosMes) || 1,
+                color: "var(--danger)",
+              },
             ].map((item) => {
               const pct =
                 item.total > 0 ? Math.round((item.amount / item.total) * 100) : 0;
@@ -296,6 +339,18 @@ export default async function DashboardPage() {
             >
               <ShoppingBag size={14} />
               Registrar venta presencial
+            </Link>
+            <Link
+              href="/egresos/nueva"
+              className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors"
+              style={{
+                background: "rgba(239,68,68,0.08)",
+                color: "var(--danger)",
+                border: "1px solid rgba(239,68,68,0.2)",
+              }}
+            >
+              <TrendingDown size={14} />
+              Registrar egreso
             </Link>
             <Link
               href="/agenda"
