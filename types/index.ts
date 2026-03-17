@@ -181,6 +181,18 @@ export interface VentaWithItems extends VentaPresencial {
   venta_presencial_items: VentaPresencialItem[];
 }
 
+export type EgresoCategoria = "insumos" | "arriendo" | "servicios" | "transporte" | "marketing" | "otro";
+
+export interface Egreso {
+  id: string;
+  concepto: string;
+  monto_clp: number;
+  categoria: EgresoCategoria;
+  metodo_pago: "efectivo" | "transferencia" | "debito" | "credito";
+  notas: string | null;
+  created_at: string;
+}
+
 export interface EventoWithStats extends Evento {
   total_fotos?: number;
   fotos_vendidas?: number;
