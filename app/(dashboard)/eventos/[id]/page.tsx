@@ -11,6 +11,7 @@ import {
   Layers,
 } from "lucide-react";
 import EventoEditModal from "@/components/eventos/EventoEditModal";
+import CrearSubEventoModal from "@/components/eventos/CrearSubEventoModal";
 import EventoFotosSection from "@/components/eventos/EventoFotosSection";
 import EventoEliminarPanel from "@/components/eventos/EventoEliminarPanel";
 
@@ -127,11 +128,14 @@ export default async function EventoDetailPage({ params, searchParams }: PagePro
             </a>
           </div>
         </div>
-        <EventoEditModal
-          eventoId={evento.id}
-          eventoNombre={evento.nombre}
-          subEventos={(subEventos ?? []).map((s) => ({ id: s.id, nombre: s.nombre }))}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <EventoEditModal
+            eventoId={evento.id}
+            eventoNombre={evento.nombre}
+            subEventos={(subEventos ?? []).map((s) => ({ id: s.id, nombre: s.nombre }))}
+          />
+          <CrearSubEventoModal eventoId={evento.id} />
+        </div>
       </div>
 
       {/* Stats */}
