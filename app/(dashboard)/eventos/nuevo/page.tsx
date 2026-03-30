@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
-import { ArrowLeft, Plus, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Loader2, UploadCloud, X, Image as ImageIcon } from "lucide-react";
 
 function slugify(text: string): string {
   return text
@@ -15,13 +15,79 @@ function slugify(text: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
+type PendingFoto = {
+  url: string;
+  key: string;
+  nombreArchivo: string;
+};
+
+type SubEventoForm = {
+  nombre: string;
+  fotos: PendingFoto[];
+};
+
+async function uploadFotoFile(file: File): Promise<PendingFoto> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("folder", "eventos");
+  const res = await fetch("/api/upload", { method: "POST", body: fd });
+  const json = await res.json();
+  if (!res.ok) throw new Error((json.error as string) ?? "Error al subir");
+  return {
+    url: json.url as string,
+    key: json.key as string,
+    nombreArchivo: file.name,
+  };
+}
+
+function FotoChips({
+  fotos,
+  onRemove,
+  disabled,
+}: {
+  fotos: PendingFoto[];
+  onRemove: (i: number) => void;
+  disabled?: boolean;
+}) {
+  if (!fotos.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {fotos.map((f, i) => (
+        <div
+          key={`${f.key}-${i}`}
+          className="relative group w-16 h-16 rounded-lg overflow-hidden shrink-0"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+        >
+          <img src={f.url} alt="" className="w-full h-full object-cover" />
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onRemove(i)}
+            className="absolute top-0.5 right-0.5 w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold opacity-90 hover:opacity-100 transition-opacity disabled:opacity-40"
+            style={{ background: "rgba(0,0,0,0.65)", color: "#fff" }}
+            aria-label="Quitar foto"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function NuevoEventoPage() {
   const router = useRouter();
   const [nombre, setNombre] = useState("");
   const [slug, setSlug] = useState("");
-  const [subEventos, setSubEventos] = useState<string[]>([""]);
+  const [precioDefault, setPrecioDefault] = useState(5000);
+  const [subEventos, setSubEventos] = useState<SubEventoForm[]>([{ nombre: "", fotos: [] }]);
+  const [fotosPrincipal, setFotosPrincipal] = useState<PendingFoto[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState<"principal" | number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const inputPrincipalRef = useRef<HTMLInputElement>(null);
+  const inputSubRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   function handleNombreChange(value: string) {
     setNombre(value);
@@ -29,26 +95,82 @@ export default function NuevoEventoPage() {
   }
 
   function addSubEvento() {
-    setSubEventos([...subEventos, ""]);
+    setSubEventos([...subEventos, { nombre: "", fotos: [] }]);
   }
 
   function removeSubEvento(i: number) {
     setSubEventos(subEventos.filter((_, idx) => idx !== i));
   }
 
-  function updateSubEvento(i: number, value: string) {
+  function updateSubNombre(i: number, value: string) {
     const updated = [...subEventos];
-    updated[i] = value;
+    updated[i] = { ...updated[i], nombre: value };
     setSubEventos(updated);
+  }
+
+  function removeFotoPrincipal(i: number) {
+    setFotosPrincipal((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function removeFotoSub(subIndex: number, fotoIndex: number) {
+    setSubEventos((prev) => {
+      const next = [...prev];
+      next[subIndex] = {
+        ...next[subIndex],
+        fotos: next[subIndex].fotos.filter((_, fi) => fi !== fotoIndex),
+      };
+      return next;
+    });
+  }
+
+  async function onFilesSelected(files: FileList | null, target: "principal" | number) {
+    if (!files?.length) return;
+    setError(null);
+    setUploading(target);
+    try {
+      const uploaded: PendingFoto[] = [];
+      for (const file of Array.from(files)) {
+        uploaded.push(await uploadFotoFile(file));
+      }
+      if (target === "principal") {
+        setFotosPrincipal((prev) => [...prev, ...uploaded]);
+      } else {
+        setSubEventos((prev) => {
+          const next = [...prev];
+          const row = next[target];
+          if (!row) return prev;
+          next[target] = { ...row, fotos: [...row.fotos, ...uploaded] };
+          return next;
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al subir imágenes");
+    } finally {
+      setUploading(null);
+      if (target === "principal") inputPrincipalRef.current && (inputPrincipalRef.current.value = "");
+      else {
+        const el = inputSubRefs.current[target];
+        if (el) el.value = "";
+      }
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!nombre.trim() || !slug.trim()) return;
 
+    for (let i = 0; i < subEventos.length; i++) {
+      const row = subEventos[i];
+      if (!row.nombre.trim() && row.fotos.length > 0) {
+        setError('Si agregas fotos a un sub-evento, indica también su nombre.');
+        return;
+      }
+    }
+
     setLoading(true);
     setError(null);
     const supabase = createClient();
+    const precio = Math.max(0, Math.floor(Number(precioDefault)) || 0);
 
     const { data: evento, error: eventError } = await supabase
       .from("eventos")
@@ -62,18 +184,68 @@ export default function NuevoEventoPage() {
       return;
     }
 
-    // Create sub-eventos
-    const validSubs = subEventos.filter((s) => s.trim());
-    if (validSubs.length > 0) {
-      const { error: subError } = await supabase.from("sub_eventos").insert(
-        validSubs.map((nombre) => ({
-          evento_id: evento.id,
-          nombre: nombre.trim(),
-          slug: slugify(nombre),
-        }))
-      );
+    const subsConNombre = subEventos.filter((s) => s.nombre.trim());
+    let subsCreados: { id: string }[] = [];
+
+    if (subsConNombre.length > 0) {
+      const { data: insertedSubs, error: subError } = await supabase
+        .from("sub_eventos")
+        .insert(
+          subsConNombre.map((s) => ({
+            evento_id: evento.id,
+            nombre: s.nombre.trim(),
+            slug: slugify(s.nombre),
+          }))
+        )
+        .select("id");
+
       if (subError) {
         setError(subError.message);
+        setLoading(false);
+        return;
+      }
+      subsCreados = insertedSubs ?? [];
+    }
+
+    const filasFotos: {
+      public_id: string;
+      storage_provider: string;
+      precio: number;
+      nombre_archivo: string | null;
+      evento_id: string;
+      sub_evento_id: string | null;
+    }[] = [];
+
+    for (const f of fotosPrincipal) {
+      filasFotos.push({
+        public_id: f.key,
+        storage_provider: "cloudflare",
+        precio,
+        nombre_archivo: f.nombreArchivo,
+        evento_id: evento.id,
+        sub_evento_id: null,
+      });
+    }
+
+    subsConNombre.forEach((s, i) => {
+      const subId = subsCreados[i]?.id;
+      if (!subId) return;
+      for (const f of s.fotos) {
+        filasFotos.push({
+          public_id: f.key,
+          storage_provider: "cloudflare",
+          precio,
+          nombre_archivo: f.nombreArchivo,
+          evento_id: evento.id,
+          sub_evento_id: subId,
+        });
+      }
+    });
+
+    if (filasFotos.length > 0) {
+      const { error: fotosErr } = await supabase.from("fotos").insert(filasFotos);
+      if (fotosErr) {
+        setError(fotosErr.message);
         setLoading(false);
         return;
       }
@@ -82,8 +254,10 @@ export default function NuevoEventoPage() {
     router.push(`/eventos/${evento.id}`);
   }
 
+  const busy = loading || uploading !== null;
+
   return (
-    <div className="max-w-xl space-y-5">
+    <div className="max-w-2xl space-y-5">
       <div>
         <Link
           href="/eventos"
@@ -110,6 +284,7 @@ export default function NuevoEventoPage() {
             className="input-field"
             placeholder="Ej: Licenciatura Escuela San Pedro 2025"
             required
+            disabled={busy}
           />
         </div>
 
@@ -123,10 +298,79 @@ export default function NuevoEventoPage() {
             onChange={(e) => setSlug(e.target.value)}
             className="input-field font-mono text-sm"
             placeholder="licenciatura-escuela-san-pedro-2025"
+            disabled={busy}
           />
           <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
             fotosmony.cl/eventos/{slug || "..."}
           </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1.5" style={{ color: "var(--text-secondary)" }}>
+            Precio por defecto de las fotos (CLP)
+          </label>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={precioDefault}
+            onChange={(e) => setPrecioDefault(parseInt(e.target.value, 10) || 0)}
+            className="input-field max-w-xs"
+            disabled={busy}
+          />
+          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+            Se aplicará a todas las imágenes que subas en este paso. Puedes afinar precios después en el sitio si lo necesitas.
+          </p>
+        </div>
+
+        {/* Fotos evento principal */}
+        <div
+          className="rounded-xl p-4 space-y-2"
+          style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+                Fotos del evento principal
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                Galería general del evento (no ligada a un sub-evento concreto).
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => inputPrincipalRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+              style={{
+                background: "var(--bg-card)",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              {uploading === "principal" ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <UploadCloud size={14} />
+              )}
+              Subir
+            </button>
+          </div>
+          <input
+            ref={inputPrincipalRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            multiple
+            className="hidden"
+            onChange={(e) => onFilesSelected(e.target.files, "principal")}
+          />
+          {!fotosPrincipal.length && (
+            <div className="flex items-center gap-2 text-xs py-2" style={{ color: "var(--text-muted)" }}>
+              <ImageIcon size={16} className="opacity-40" />
+              Opcional — puedes agregarlas luego desde la ficha del evento.
+            </div>
+          )}
+          <FotoChips fotos={fotosPrincipal} onRemove={removeFotoPrincipal} disabled={busy} />
         </div>
 
         {/* Sub-eventos */}
@@ -135,30 +379,82 @@ export default function NuevoEventoPage() {
             <label className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
               Sub-eventos (opcional)
             </label>
-            <button type="button" onClick={addSubEvento} className="text-xs" style={{ color: "var(--accent)" }}>
+            <button
+              type="button"
+              onClick={addSubEvento}
+              className="text-xs"
+              style={{ color: "var(--accent)" }}
+              disabled={busy}
+            >
               + Agregar
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-4">
             {subEventos.map((sub, i) => (
-              <div key={i} className="flex gap-2">
-                <input
-                  type="text"
-                  value={sub}
-                  onChange={(e) => updateSubEvento(i, e.target.value)}
-                  className="input-field"
-                  placeholder={`Sub-evento ${i + 1}`}
-                />
-                {subEventos.length > 1 && (
+              <div
+                key={i}
+                className="rounded-xl p-4 space-y-3"
+                style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={sub.nombre}
+                    onChange={(e) => updateSubNombre(i, e.target.value)}
+                    className="input-field flex-1"
+                    placeholder={`Nombre del sub-evento ${i + 1}`}
+                    disabled={busy}
+                  />
+                  {subEventos.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeSubEvento(i)}
+                      className="px-2 text-sm rounded-lg shrink-0"
+                      style={{
+                        background: "var(--bg-primary)",
+                        color: "var(--danger)",
+                        border: "1px solid var(--border)",
+                      }}
+                      disabled={busy}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Fotos solo de este sub-evento
+                  </p>
                   <button
                     type="button"
-                    onClick={() => removeSubEvento(i)}
-                    className="px-2 text-sm rounded-lg shrink-0"
-                    style={{ background: "var(--bg-primary)", color: "var(--danger)", border: "1px solid var(--border)" }}
+                    disabled={busy}
+                    onClick={() => inputSubRefs.current[i]?.click()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
+                    style={{
+                      background: "var(--bg-card)",
+                      color: "var(--accent)",
+                      border: "1px solid var(--border)",
+                    }}
                   >
-                    ✕
+                    {uploading === i ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <UploadCloud size={13} />
+                    )}
+                    Subir fotos
                   </button>
-                )}
+                  <input
+                    ref={(el) => {
+                      inputSubRefs.current[i] = el;
+                    }}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => onFilesSelected(e.target.files, i)}
+                  />
+                </div>
+                <FotoChips fotos={sub.fotos} onRemove={(fi) => removeFotoSub(i, fi)} disabled={busy} />
               </div>
             ))}
           </div>
@@ -174,7 +470,7 @@ export default function NuevoEventoPage() {
         )}
 
         <div className="flex gap-3 pt-2">
-          <button type="submit" disabled={loading} className="btn-primary">
+          <button type="submit" disabled={busy} className="btn-primary">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
             Crear evento
           </button>
