@@ -4,15 +4,15 @@ import { formatDate, formatCLP } from "@/lib/utils";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Camera,
   Image,
   ExternalLink,
   DollarSign,
   ShoppingCart,
   Layers,
 } from "lucide-react";
-import FotoThumb from "@/components/eventos/FotoThumb";
 import EventoEditModal from "@/components/eventos/EventoEditModal";
+import EventoFotosSection from "@/components/eventos/EventoFotosSection";
+import EventoEliminarPanel from "@/components/eventos/EventoEliminarPanel";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -213,63 +213,28 @@ export default async function EventoDetailPage({ params, searchParams }: PagePro
         </div>
       )}
 
-      {/* Photo grid */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
-            Fotos ({totalFotos ?? 0})
-          </h2>
-          {totalPages > 1 && (
-            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-              Página {page} de {totalPages}
-            </div>
-          )}
-        </div>
+      <EventoFotosSection
+        eventoId={id}
+        subEventos={(subEventos ?? []).map((s) => ({ id: s.id, nombre: s.nombre }))}
+        fotos={
+          (fotos ?? []).map((f) => ({
+            id: f.id,
+            public_id: f.public_id,
+            storage_provider: f.storage_provider,
+            nombre_archivo: f.nombre_archivo,
+            precio: f.precio,
+            sub_evento_id: f.sub_evento_id,
+          }))
+        }
+        totalFotos={totalFotos ?? 0}
+        selectedSub={selectedSub}
+        page={page}
+        totalPages={totalPages}
+        coverPublicId={evento.cover_public_id ?? null}
+        coverStorageProvider={evento.cover_storage_provider ?? null}
+      />
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-          {(fotos ?? []).map((foto) => (
-            <FotoThumb
-              key={foto.id}
-              publicId={foto.public_id}
-              storageProvider={foto.storage_provider}
-              nombreArchivo={foto.nombre_archivo}
-              precio={foto.precio}
-            />
-          ))}
-        </div>
-
-        {!fotos?.length && (
-          <div className="text-center py-8" style={{ color: "var(--text-muted)" }}>
-            <Image size={32} className="mx-auto mb-2 opacity-20" />
-            <p className="text-sm">No hay fotos en este evento</p>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 mt-4 pt-4" style={{ borderTop: "1px solid var(--border)" }}>
-            {page > 1 && (
-              <Link
-                href={`/eventos/${id}?sub=${selectedSub}&page=${page - 1}`}
-                className="btn-secondary text-xs px-3 py-1.5"
-              >
-                ← Anterior
-              </Link>
-            )}
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {page} / {totalPages}
-            </span>
-            {page < totalPages && (
-              <Link
-                href={`/eventos/${id}?sub=${selectedSub}&page=${page + 1}`}
-                className="btn-secondary text-xs px-3 py-1.5"
-              >
-                Siguiente →
-              </Link>
-            )}
-          </div>
-        )}
-      </div>
+      <EventoEliminarPanel eventoId={id} eventoNombre={evento.nombre} />
     </div>
   );
 }
