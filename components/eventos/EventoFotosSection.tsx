@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import FotoThumb from "@/components/eventos/FotoThumb";
+import UploadProgressBar from "@/components/ui/UploadProgressBar";
+import { uploadEventoImage, batchBytesPercent } from "@/lib/upload-evento-client";
 import { Image, Loader2, UploadCloud } from "lucide-react";
 
 export type EventoFotoRow = {
@@ -28,20 +30,6 @@ function esPortadaDelEvento(
   const fp = foto.storage_provider ?? null;
   const cp = coverStorageProvider ?? null;
   return fp === cp;
-}
-
-async function uploadFotoFile(file: File): Promise<{ url: string; key: string; nombreArchivo: string }> {
-  const fd = new FormData();
-  fd.append("file", file);
-  fd.append("folder", "eventos");
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
-  const json = await res.json();
-  if (!res.ok) throw new Error((json.error as string) ?? "Error al subir");
-  return {
-    url: json.url as string,
-    key: json.key as string,
-    nombreArchivo: file.name,
-  };
 }
 
 interface EventoFotosSectionProps {
@@ -71,7 +59,8 @@ export default function EventoFotosSection({
   const fileRef = useRef<HTMLInputElement>(null);
   const [destino, setDestino] = useState<string>("principal");
   const [precio, setPrecio] = useState(5000);
-  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ percent: number; detail: string } | null>(null);
+  const uploading = uploadProgress !== null;
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [coverFotoId, setCoverFotoId] = useState<string | null>(null);
   const [clearingCover, setClearingCover] = useState(false);
@@ -174,11 +163,15 @@ export default function EventoFotosSection({
     if (!files?.length) return;
 
     setError(null);
-    setUploading(true);
     const supabase = createClient();
     const precioClamped = Math.max(0, Math.floor(Number(precio)) || 0);
-
     const sub_evento_id = destino === "principal" ? null : destino;
+
+    const fileArr = Array.from(files);
+    const totalBytes = fileArr.reduce((s, f) => s + f.size, 0);
+    let completedBefore = 0;
+    setUploadProgress({ percent: 0, detail: `Preparando ${fileArr.length} imagen(es)…` });
+
     const rows: {
       public_id: string;
       storage_provider: string;
@@ -189,8 +182,15 @@ export default function EventoFotosSection({
     }[] = [];
 
     try {
-      for (const file of Array.from(files)) {
-        const up = await uploadFotoFile(file);
+      for (let i = 0; i < fileArr.length; i++) {
+        const file = fileArr[i];
+        const up = await uploadEventoImage(file, (loaded) => {
+          const pct = batchBytesPercent(completedBefore, loaded, totalBytes);
+          setUploadProgress({
+            percent: pct,
+            detail: `Imagen ${i + 1} de ${fileArr.length}: ${file.name}`,
+          });
+        });
         rows.push({
           public_id: up.key,
           storage_provider: "cloudflare",
@@ -199,7 +199,10 @@ export default function EventoFotosSection({
           evento_id: eventoId,
           sub_evento_id,
         });
+        completedBefore += file.size;
       }
+
+      setUploadProgress({ percent: 100, detail: "Guardando en la galería…" });
 
       const { error: insErr } = await supabase.from("fotos").insert(rows);
       if (insErr) {
@@ -211,7 +214,7 @@ export default function EventoFotosSection({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al subir");
     } finally {
-      setUploading(false);
+      setUploadProgress(null);
     }
   }
 
@@ -313,6 +316,9 @@ export default function EventoFotosSection({
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           Puedes elegir varias imágenes a la vez. Se suben a la galería indicada arriba.
         </p>
+        {uploadProgress ? (
+          <UploadProgressBar percent={uploadProgress.percent} detail={uploadProgress.detail} />
+        ) : null}
         {error ? (
           <p className="text-sm px-3 py-2 rounded-lg" style={{ background: "rgba(239,68,68,0.1)", color: "var(--danger)" }}>
             {error}

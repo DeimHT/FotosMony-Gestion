@@ -4,7 +4,9 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
-import { ArrowLeft, Plus, Loader2, UploadCloud, X, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Plus, Loader2, UploadCloud, Image as ImageIcon } from "lucide-react";
+import UploadProgressBar from "@/components/ui/UploadProgressBar";
+import { uploadEventoImage, batchBytesPercent } from "@/lib/upload-evento-client";
 
 function slugify(text: string): string {
   return text
@@ -25,20 +27,6 @@ type SubEventoForm = {
   nombre: string;
   fotos: PendingFoto[];
 };
-
-async function uploadFotoFile(file: File): Promise<PendingFoto> {
-  const fd = new FormData();
-  fd.append("file", file);
-  fd.append("folder", "eventos");
-  const res = await fetch("/api/upload", { method: "POST", body: fd });
-  const json = await res.json();
-  if (!res.ok) throw new Error((json.error as string) ?? "Error al subir");
-  return {
-    url: json.url as string,
-    key: json.key as string,
-    nombreArchivo: file.name,
-  };
-}
 
 function FotoChips({
   fotos,
@@ -84,6 +72,7 @@ export default function NuevoEventoPage() {
   const [fotosPrincipal, setFotosPrincipal] = useState<PendingFoto[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState<"principal" | number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ percent: number; detail: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const inputPrincipalRef = useRef<HTMLInputElement>(null);
@@ -127,11 +116,30 @@ export default function NuevoEventoPage() {
     if (!files?.length) return;
     setError(null);
     setUploading(target);
+    const fileArr = Array.from(files);
+    const totalBytes = fileArr.reduce((s, f) => s + f.size, 0);
+    let completedBefore = 0;
+    setUploadProgress({ percent: 0, detail: `Preparando ${fileArr.length} imagen(es)…` });
+
     try {
       const uploaded: PendingFoto[] = [];
-      for (const file of Array.from(files)) {
-        uploaded.push(await uploadFotoFile(file));
+      for (let i = 0; i < fileArr.length; i++) {
+        const file = fileArr[i];
+        const item = await uploadEventoImage(file, (loaded) => {
+          const pct = batchBytesPercent(completedBefore, loaded, totalBytes);
+          setUploadProgress({
+            percent: pct,
+            detail: `Imagen ${i + 1} de ${fileArr.length}: ${file.name}`,
+          });
+        });
+        uploaded.push({
+          url: item.url,
+          key: item.key,
+          nombreArchivo: item.nombreArchivo,
+        });
+        completedBefore += file.size;
       }
+      setUploadProgress({ percent: 100, detail: "Subida completa" });
       if (target === "principal") {
         setFotosPrincipal((prev) => [...prev, ...uploaded]);
       } else {
@@ -147,6 +155,7 @@ export default function NuevoEventoPage() {
       setError(e instanceof Error ? e.message : "Error al subir imágenes");
     } finally {
       setUploading(null);
+      setUploadProgress(null);
       if (target === "principal") inputPrincipalRef.current && (inputPrincipalRef.current.value = "");
       else {
         const el = inputSubRefs.current[target];
@@ -364,6 +373,9 @@ export default function NuevoEventoPage() {
             className="hidden"
             onChange={(e) => onFilesSelected(e.target.files, "principal")}
           />
+          {uploading === "principal" && uploadProgress ? (
+            <UploadProgressBar percent={uploadProgress.percent} detail={uploadProgress.detail} className="mt-2" />
+          ) : null}
           {!fotosPrincipal.length && (
             <div className="flex items-center gap-2 text-xs py-2" style={{ color: "var(--text-muted)" }}>
               <ImageIcon size={16} className="opacity-40" />
@@ -454,6 +466,9 @@ export default function NuevoEventoPage() {
                     onChange={(e) => onFilesSelected(e.target.files, i)}
                   />
                 </div>
+                {uploading === i && uploadProgress ? (
+                  <UploadProgressBar percent={uploadProgress.percent} detail={uploadProgress.detail} />
+                ) : null}
                 <FotoChips fotos={sub.fotos} onRemove={(fi) => removeFotoSub(i, fi)} disabled={busy} />
               </div>
             ))}
