@@ -3,13 +3,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Service } from "@/types";
+import { ProductoVariante, ProductoWithVariantes } from "@/types";
 import { formatCLP } from "@/lib/utils";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Loader2, ShoppingBag, AlertCircle } from "lucide-react";
+import NumericInput from "@/components/ui/NumericInput";
 import ClienteSelector, { ClienteSeleccionado } from "@/components/clientes/ClienteSelector";
 
 interface LineItem {
+  producto_id: string;
+  variante_id: string;
   servicio_nombre: string;
   cantidad: number;
   precio_unitario: number;
@@ -29,27 +32,36 @@ export default function NuevaVentaPage() {
   const [esfiado, setEsFiado] = useState(false);
   const [notas, setNotas] = useState("");
   const [items, setItems] = useState<LineItem[]>([
-    { servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
+    { producto_id: "", variante_id: "", servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
   ]);
-  const [services, setServices] = useState<Service[]>([]);
+  const [productos, setProductos] = useState<ProductoWithVariantes[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadServices() {
+    async function load() {
       const supabase = createClient();
       const { data } = await supabase
-        .from("services")
-        .select("*")
-        .eq("active", true)
-        .order("sort_order");
-      setServices(data ?? []);
+        .from("productos")
+        .select("*, producto_variantes(*)")
+        .eq("activo", true)
+        .order("nombre");
+      const filtered = (data ?? []).map((p) => ({
+        ...p,
+        producto_variantes: p.producto_variantes
+          .filter((v: ProductoVariante) => v.activo)
+          .sort((a: ProductoVariante, b: ProductoVariante) => a.nombre.localeCompare(b.nombre)),
+      }));
+      setProductos(filtered);
     }
-    loadServices();
+    load();
   }, []);
 
   function addItem() {
-    setItems([...items, { servicio_nombre: "", cantidad: 1, precio_unitario: 0 }]);
+    setItems([
+      ...items,
+      { producto_id: "", variante_id: "", servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
+    ]);
   }
 
   function removeItem(i: number) {
@@ -62,17 +74,31 @@ export default function NuevaVentaPage() {
     setItems(updated);
   }
 
-  function applyService(i: number, serviceId: string) {
-    const svc = services.find((s) => s.id === serviceId);
-    if (svc) {
-      const updated = [...items];
-      updated[i] = {
-        ...updated[i],
-        servicio_nombre: svc.title,
-        precio_unitario: svc.price_clp,
-      };
-      setItems(updated);
-    }
+  function handleProductoChange(i: number, productoId: string) {
+    const updated = [...items];
+    updated[i] = {
+      ...updated[i],
+      producto_id: productoId,
+      variante_id: "",
+      servicio_nombre: "",
+      precio_unitario: 0,
+    };
+    setItems(updated);
+  }
+
+  function handleVarianteChange(i: number, varianteId: string) {
+    const item = items[i];
+    const producto = productos.find((p) => p.id === item.producto_id);
+    const variante = producto?.producto_variantes.find((v) => v.id === varianteId);
+    if (!producto || !variante) return;
+    const updated = [...items];
+    updated[i] = {
+      ...updated[i],
+      variante_id: variante.id,
+      precio_unitario: variante.precio_clp,
+      servicio_nombre: `${producto.nombre} – ${variante.nombre}`,
+    };
+    setItems(updated);
   }
 
   const total = items.reduce((s, item) => s + item.cantidad * item.precio_unitario, 0);
@@ -83,9 +109,11 @@ export default function NuevaVentaPage() {
       setError("El total debe ser mayor a 0");
       return;
     }
-    const validItems = items.filter((i) => i.servicio_nombre.trim() && i.cantidad > 0 && i.precio_unitario > 0);
+    const validItems = items.filter(
+      (i) => i.variante_id && i.cantidad > 0 && i.precio_unitario > 0
+    );
     if (!validItems.length) {
-      setError("Agrega al menos un ítem válido");
+      setError("Agrega al menos un ítem válido con producto y variante seleccionados");
       return;
     }
 
@@ -115,6 +143,7 @@ export default function NuevaVentaPage() {
     const { error: itemsError } = await supabase.from("venta_presencial_items").insert(
       validItems.map((item) => ({
         venta_id: venta.id,
+        variante_id: item.variante_id || null,
         servicio_nombre: item.servicio_nombre,
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
@@ -149,7 +178,7 @@ export default function NuevaVentaPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Client selector */}
+        {/* Cliente */}
         <div className="card space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -168,11 +197,6 @@ export default function NuevaVentaPage() {
             <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
               Productos / Servicios
             </h2>
-            {services.length > 0 && (
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Selecciona para autocompletar
-              </p>
-            )}
           </div>
 
           <div className="space-y-3">
@@ -198,54 +222,67 @@ export default function NuevaVentaPage() {
                   )}
                 </div>
 
-                {/* Quick service select */}
-                {services.length > 0 && (
+                {/* Producto selector */}
+                <div>
+                  <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                    Producto
+                  </label>
                   <select
-                    className="input-field text-xs"
-                    onChange={(e) => applyService(i, e.target.value)}
-                    defaultValue=""
+                    className="input-field"
+                    value={item.producto_id}
+                    onChange={(e) => handleProductoChange(i, e.target.value)}
                   >
-                    <option value="">— Seleccionar servicio existente —</option>
-                    {services.map((svc) => (
-                      <option key={svc.id} value={svc.id}>
-                        {svc.title} ({formatCLP(svc.price_clp)})
+                    <option value="">— Seleccionar producto —</option>
+                    {productos.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre}
                       </option>
                     ))}
                   </select>
-                )}
+                </div>
 
-                <input
-                  type="text"
-                  value={item.servicio_nombre}
-                  onChange={(e) => updateItem(i, "servicio_nombre", e.target.value)}
-                  className="input-field"
-                  placeholder="Nombre del servicio o producto"
-                  required
-                />
+                {/* Variante selector — only shown once a product is picked */}
+                {item.producto_id && (
+                  <div>
+                    <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                      Variante
+                    </label>
+                    <select
+                      className="input-field"
+                      value={item.variante_id}
+                      onChange={(e) => handleVarianteChange(i, e.target.value)}
+                    >
+                      <option value="">— Seleccionar variante —</option>
+                      {productos
+                        .find((p) => p.id === item.producto_id)
+                        ?.producto_variantes.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.nombre} ({formatCLP(v.precio_clp)})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
                       Cantidad
                     </label>
-                    <input
-                      type="number"
-                      min={1}
+                    <NumericInput
                       value={item.cantidad}
-                      onChange={(e) => updateItem(i, "cantidad", parseInt(e.target.value) || 1)}
-                      className="input-field"
+                      onChange={(val) => updateItem(i, "cantidad", Math.max(1, val))}
+                      min={1}
+                      placeholder="1"
                     />
                   </div>
                   <div>
                     <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
                       Precio unitario (CLP)
                     </label>
-                    <input
-                      type="number"
-                      min={0}
+                    <NumericInput
                       value={item.precio_unitario}
-                      onChange={(e) => updateItem(i, "precio_unitario", parseInt(e.target.value) || 0)}
-                      className="input-field"
+                      onChange={(val) => updateItem(i, "precio_unitario", val)}
                     />
                   </div>
                 </div>

@@ -3,16 +3,21 @@
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Service } from "@/types";
+import { ProductoVariante, ProductoWithVariantes } from "@/types";
 import { formatCLP } from "@/lib/utils";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Loader2, ShoppingBag, AlertCircle } from "lucide-react";
+import NumericInput from "@/components/ui/NumericInput";
 import ClienteSelector, { ClienteSeleccionado } from "@/components/clientes/ClienteSelector";
 
 interface LineItem {
+  producto_id: string;
+  variante_id: string;
   servicio_nombre: string;
   cantidad: number;
   precio_unitario: number;
+  legacy?: boolean;
+  legacy_nombre?: string;
 }
 
 const METODOS = [
@@ -31,46 +36,56 @@ export default function EditarVentaPage() {
   const [metodoPago, setMetodoPago] = useState("efectivo");
   const [esfiado, setEsFiado] = useState(false);
   const [notas, setNotas] = useState("");
-  const [items, setItems] = useState<LineItem[]>([{ servicio_nombre: "", cantidad: 1, precio_unitario: 0 }]);
-  const [services, setServices] = useState<Service[]>([]);
+  const [items, setItems] = useState<LineItem[]>([
+    { producto_id: "", variante_id: "", servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
+  ]);
+  const [productos, setProductos] = useState<ProductoWithVariantes[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadServices() {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("services")
-        .select("*")
-        .eq("active", true)
-        .order("sort_order");
-      setServices(data ?? []);
-    }
-    loadServices();
-  }, []);
-
+  // Load productos and venta data in parallel, then resolve producto_id for items that have variante_id
   useEffect(() => {
     if (!id) return;
+
     async function load() {
       const supabase = createClient();
-      const { data: venta, error: ventaError } = await supabase
-        .from("ventas_presenciales")
-        .select("*")
-        .eq("id", id)
-        .single();
 
-      if (ventaError || !venta) {
+      const [productosResult, ventaResult, itemsResult] = await Promise.all([
+        supabase
+          .from("productos")
+          .select("*, producto_variantes(*)")
+          .eq("activo", true)
+          .order("nombre"),
+        supabase.from("ventas_presenciales").select("*").eq("id", id).single(),
+        supabase.from("venta_presencial_items").select("*").eq("venta_id", id),
+      ]);
+
+      if (ventaResult.error || !ventaResult.data) {
         setError("No se pudo cargar la venta");
         setLoadingData(false);
         return;
       }
 
-      const { data: itemsData } = await supabase
-        .from("venta_presencial_items")
-        .select("*")
-        .eq("venta_id", id);
+      // Build filtered productos list
+      const filteredProductos = (productosResult.data ?? []).map((p) => ({
+        ...p,
+        producto_variantes: p.producto_variantes
+          .filter((v: ProductoVariante) => v.activo)
+          .sort((a: ProductoVariante, b: ProductoVariante) => a.nombre.localeCompare(b.nombre)),
+      }));
+      setProductos(filteredProductos);
 
+      // Build variante -> producto map to resolve producto_id from variante_id
+      const varianteToProductoMap = new Map<string, string>();
+      for (const p of filteredProductos) {
+        for (const v of p.producto_variantes as ProductoVariante[]) {
+          varianteToProductoMap.set(v.id, p.id);
+        }
+      }
+
+      // Set venta header fields
+      const venta = ventaResult.data;
       setCliente({
         nombre: venta.cliente_nombre ?? "",
         email: venta.cliente_email ?? "",
@@ -79,24 +94,48 @@ export default function EditarVentaPage() {
       setEsFiado(venta.estado === "fiado");
       setNotas(venta.notas ?? "");
 
-      if (itemsData?.length) {
+      // Map loaded items — distinguish legacy (no variante_id) from normal
+      if (itemsResult.data?.length) {
         setItems(
-          itemsData.map((i) => ({
-            servicio_nombre: i.servicio_nombre,
-            cantidad: i.cantidad,
-            precio_unitario: i.precio_unitario,
-          }))
+          itemsResult.data.map((i) => {
+            if (i.variante_id) {
+              return {
+                producto_id: varianteToProductoMap.get(i.variante_id) ?? "",
+                variante_id: i.variante_id,
+                servicio_nombre: i.servicio_nombre,
+                cantidad: i.cantidad,
+                precio_unitario: i.precio_unitario,
+              };
+            }
+            // Legacy item — no variante_id in DB
+            return {
+              producto_id: "",
+              variante_id: "",
+              servicio_nombre: i.servicio_nombre,
+              cantidad: i.cantidad,
+              precio_unitario: i.precio_unitario,
+              legacy: true,
+              legacy_nombre: i.servicio_nombre,
+            };
+          })
         );
       } else {
-        setItems([{ servicio_nombre: "", cantidad: 1, precio_unitario: 0 }]);
+        setItems([
+          { producto_id: "", variante_id: "", servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
+        ]);
       }
+
       setLoadingData(false);
     }
+
     load();
   }, [id]);
 
   function addItem() {
-    setItems([...items, { servicio_nombre: "", cantidad: 1, precio_unitario: 0 }]);
+    setItems([
+      ...items,
+      { producto_id: "", variante_id: "", servicio_nombre: "", cantidad: 1, precio_unitario: 0 },
+    ]);
   }
 
   function removeItem(i: number) {
@@ -109,17 +148,31 @@ export default function EditarVentaPage() {
     setItems(updated);
   }
 
-  function applyService(i: number, serviceId: string) {
-    const svc = services.find((s) => s.id === serviceId);
-    if (svc) {
-      const updated = [...items];
-      updated[i] = {
-        ...updated[i],
-        servicio_nombre: svc.title,
-        precio_unitario: svc.price_clp,
-      };
-      setItems(updated);
-    }
+  function handleProductoChange(i: number, productoId: string) {
+    const updated = [...items];
+    updated[i] = {
+      ...updated[i],
+      producto_id: productoId,
+      variante_id: "",
+      servicio_nombre: "",
+      precio_unitario: 0,
+    };
+    setItems(updated);
+  }
+
+  function handleVarianteChange(i: number, varianteId: string) {
+    const item = items[i];
+    const producto = productos.find((p) => p.id === item.producto_id);
+    const variante = producto?.producto_variantes.find((v) => v.id === varianteId);
+    if (!producto || !variante) return;
+    const updated = [...items];
+    updated[i] = {
+      ...updated[i],
+      variante_id: variante.id,
+      precio_unitario: variante.precio_clp,
+      servicio_nombre: `${producto.nombre} – ${variante.nombre}`,
+    };
+    setItems(updated);
   }
 
   const total = items.reduce((s, item) => s + item.cantidad * item.precio_unitario, 0);
@@ -130,8 +183,23 @@ export default function EditarVentaPage() {
       setError("El total debe ser mayor a 0");
       return;
     }
-    const validItems = items.filter(
-      (i) => i.servicio_nombre.trim() && i.cantidad > 0 && i.precio_unitario > 0
+
+    // Validate all items
+    const hasInvalid = items.some((i) => {
+      if (i.legacy) return !i.servicio_nombre.trim() || i.precio_unitario <= 0;
+      return !i.variante_id || i.cantidad <= 0 || i.precio_unitario <= 0;
+    });
+    if (hasInvalid) {
+      setError(
+        "Todos los ítems deben tener producto/variante seleccionados (o precio válido si son ítems heredados)"
+      );
+      return;
+    }
+
+    const validItems = items.filter((i) =>
+      i.legacy
+        ? i.servicio_nombre.trim() && i.precio_unitario > 0
+        : i.variante_id && i.cantidad > 0 && i.precio_unitario > 0
     );
     if (!validItems.length) {
       setError("Agrega al menos un ítem válido");
@@ -165,6 +233,7 @@ export default function EditarVentaPage() {
     const { error: itemsError } = await supabase.from("venta_presencial_items").insert(
       validItems.map((item) => ({
         venta_id: id,
+        variante_id: item.variante_id || null,
         servicio_nombre: item.servicio_nombre,
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
@@ -210,6 +279,7 @@ export default function EditarVentaPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Cliente */}
         <div className="card space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -222,16 +292,12 @@ export default function EditarVentaPage() {
           <ClienteSelector value={cliente} onChange={setCliente} />
         </div>
 
+        {/* Items */}
         <div className="card space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
               Productos / Servicios
             </h2>
-            {services.length > 0 && (
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                Selecciona para autocompletar
-              </p>
-            )}
           </div>
 
           <div className="space-y-3">
@@ -239,7 +305,11 @@ export default function EditarVentaPage() {
               <div
                 key={i}
                 className="p-3 rounded-xl space-y-2"
-                style={{ background: "var(--bg-primary)", border: "1px solid var(--border)" }}
+                style={{
+                  background: item.legacy ? "rgba(0,0,0,0.03)" : "var(--bg-primary)",
+                  border: item.legacy ? "1px dashed var(--border)" : "1px solid var(--border)",
+                  opacity: item.legacy ? 0.85 : 1,
+                }}
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
@@ -257,56 +327,119 @@ export default function EditarVentaPage() {
                   )}
                 </div>
 
-                {services.length > 0 && (
-                  <select
-                    className="input-field text-xs"
-                    onChange={(e) => applyService(i, e.target.value)}
-                    defaultValue=""
-                  >
-                    <option value="">— Seleccionar servicio existente —</option>
-                    {services.map((svc) => (
-                      <option key={svc.id} value={svc.id}>
-                        {svc.title} ({formatCLP(svc.price_clp)})
-                      </option>
-                    ))}
-                  </select>
+                {item.legacy ? (
+                  // Legacy item row — no product/variant selectors
+                  <>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p
+                        className="text-sm flex-1"
+                        style={{ color: "var(--text-muted)", fontStyle: "italic" }}
+                      >
+                        {item.legacy_nombre}
+                      </p>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full shrink-0"
+                        style={{
+                          background: "rgba(234,179,8,0.1)",
+                          color: "var(--text-secondary)",
+                          border: "1px solid rgba(234,179,8,0.25)",
+                        }}
+                      >
+                        ítem sin producto — solo precio editable
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                          Cantidad
+                        </label>
+                        <NumericInput
+                          value={item.cantidad}
+                          onChange={(val) => updateItem(i, "cantidad", Math.max(1, val))}
+                          min={1}
+                          placeholder="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                          Precio unitario (CLP)
+                        </label>
+                        <NumericInput
+                          value={item.precio_unitario}
+                          onChange={(val) => updateItem(i, "precio_unitario", val)}
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  // Normal item row — product + variant selectors
+                  <>
+                    {/* Producto selector */}
+                    <div>
+                      <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                        Producto
+                      </label>
+                      <select
+                        className="input-field"
+                        value={item.producto_id}
+                        onChange={(e) => handleProductoChange(i, e.target.value)}
+                      >
+                        <option value="">— Seleccionar producto —</option>
+                        {productos.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Variante selector — only shown once a product is picked */}
+                    {item.producto_id && (
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                          Variante
+                        </label>
+                        <select
+                          className="input-field"
+                          value={item.variante_id}
+                          onChange={(e) => handleVarianteChange(i, e.target.value)}
+                        >
+                          <option value="">— Seleccionar variante —</option>
+                          {productos
+                            .find((p) => p.id === item.producto_id)
+                            ?.producto_variantes.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.nombre} ({formatCLP(v.precio_clp)})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                          Cantidad
+                        </label>
+                        <NumericInput
+                          value={item.cantidad}
+                          onChange={(val) => updateItem(i, "cantidad", Math.max(1, val))}
+                          min={1}
+                          placeholder="1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
+                          Precio unitario (CLP)
+                        </label>
+                        <NumericInput
+                          value={item.precio_unitario}
+                          onChange={(val) => updateItem(i, "precio_unitario", val)}
+                        />
+                      </div>
+                    </div>
+                  </>
                 )}
-
-                <input
-                  type="text"
-                  value={item.servicio_nombre}
-                  onChange={(e) => updateItem(i, "servicio_nombre", e.target.value)}
-                  className="input-field"
-                  placeholder="Nombre del servicio o producto"
-                  required
-                />
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
-                      Cantidad
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={item.cantidad}
-                      onChange={(e) => updateItem(i, "cantidad", parseInt(e.target.value) || 1)}
-                      className="input-field"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs mb-1" style={{ color: "var(--text-muted)" }}>
-                      Precio unitario (CLP)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={item.precio_unitario}
-                      onChange={(e) => updateItem(i, "precio_unitario", parseInt(e.target.value) || 0)}
-                      className="input-field"
-                    />
-                  </div>
-                </div>
 
                 {item.precio_unitario > 0 && (
                   <div className="flex justify-end">
@@ -324,6 +457,7 @@ export default function EditarVentaPage() {
             Agregar ítem
           </button>
 
+          {/* Total */}
           <div
             className="flex justify-between items-center px-3 py-2 rounded-lg"
             style={{ background: "var(--accent-muted)", border: "1px solid rgba(232,184,75,0.2)" }}
@@ -337,7 +471,9 @@ export default function EditarVentaPage() {
           </div>
         </div>
 
+        {/* Payment method & notes */}
         <div className="card space-y-4">
+          {/* Fiado toggle */}
           <button
             type="button"
             onClick={() => setEsFiado(!esfiado)}
