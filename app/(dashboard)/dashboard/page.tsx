@@ -7,16 +7,21 @@ import {
   MessageSquare,
   Camera,
   Users,
-  Clock,
-  CheckCircle,
-  XCircle,
   Scale,
 } from "lucide-react";
 import StatsCard from "@/components/dashboard/StatsCard";
 import SalesChartWrapper from "@/components/dashboard/SalesChartWrapper";
+import DashboardMonthPicker from "@/components/dashboard/DashboardMonthPicker";
 import { formatCLP, formatDateTime } from "@/lib/utils";
 import { Order, SalesDataPoint } from "@/types";
-import { startOfMonth, subMonths, format, eachWeekOfInterval, endOfMonth } from "date-fns";
+import {
+  startOfMonth,
+  endOfMonth,
+  subMonths,
+  addMonths,
+  format,
+  eachWeekOfInterval,
+} from "date-fns";
 import { es } from "date-fns/locale";
 import Link from "next/link";
 
@@ -30,22 +35,35 @@ function OrderStatusBadge({ status }: { status: Order["status"] }) {
   return <span className={`badge ${s.class}`}>{s.label}</span>;
 }
 
-export default async function DashboardPage() {
-  const supabase = await createClient();
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string; year?: string }>;
+}) {
+  const sp = await searchParams;
   const now = new Date();
-  const startThisMonth = startOfMonth(now).toISOString();
-  const startLastMonth = startOfMonth(subMonths(now, 1)).toISOString();
-  const endLastMonth = startOfMonth(now).toISOString();
 
-  // ── Parallel fetches ──
+  const selectedYear = sp.year ? parseInt(sp.year) : now.getFullYear();
+  const selectedMonth = sp.month ? parseInt(sp.month) : now.getMonth() + 1;
+
+  const selectedDate = new Date(selectedYear, selectedMonth - 1, 1);
+  const prevDate = subMonths(selectedDate, 1);
+
+  const startThis = startOfMonth(selectedDate).toISOString();
+  const endThis = startOfMonth(addMonths(selectedDate, 1)).toISOString();
+  const startPrev = startOfMonth(prevDate).toISOString();
+  const endPrev = startThis;
+
+  const supabase = await createClient();
+
   const [
-    { data: ordersThisMonth },
-    { data: ordersLastMonth },
+    { data: ordersThis },
+    { data: ordersPrev },
     { count: pendingOrders },
-    { data: ventasThisMonth },
-    { data: ventasLastMonth },
-    { data: egresosThisMonth },
-    { data: egresosLastMonth },
+    { data: ventasThis },
+    { data: ventasPrev },
+    { data: egresosThis },
+    { data: egresosPrev },
     { count: unreadMessages },
     { count: totalEventos },
     { count: totalClientes },
@@ -57,13 +75,14 @@ export default async function DashboardPage() {
       .from("orders")
       .select("total_clp")
       .eq("status", "paid")
-      .gte("paid_at", startThisMonth),
+      .gte("paid_at", startThis)
+      .lt("paid_at", endThis),
     supabase
       .from("orders")
       .select("total_clp")
       .eq("status", "paid")
-      .gte("paid_at", startLastMonth)
-      .lt("paid_at", endLastMonth),
+      .gte("paid_at", startPrev)
+      .lt("paid_at", endPrev),
     supabase
       .from("orders")
       .select("*", { count: "exact", head: true })
@@ -71,21 +90,23 @@ export default async function DashboardPage() {
     supabase
       .from("ventas_presenciales")
       .select("total_clp")
-      .gte("created_at", startThisMonth),
+      .gte("created_at", startThis)
+      .lt("created_at", endThis),
     supabase
       .from("ventas_presenciales")
       .select("total_clp")
-      .gte("created_at", startLastMonth)
-      .lt("created_at", endLastMonth),
+      .gte("created_at", startPrev)
+      .lt("created_at", endPrev),
     supabase
       .from("egresos")
       .select("monto_clp")
-      .gte("created_at", startThisMonth),
+      .gte("created_at", startThis)
+      .lt("created_at", endThis),
     supabase
       .from("egresos")
       .select("monto_clp")
-      .gte("created_at", startLastMonth)
-      .lt("created_at", endLastMonth),
+      .gte("created_at", startPrev)
+      .lt("created_at", endPrev),
     supabase
       .from("contact_messages")
       .select("*", { count: "exact", head: true })
@@ -101,20 +122,22 @@ export default async function DashboardPage() {
       .from("orders")
       .select("paid_at, total_clp")
       .eq("status", "paid")
-      .gte("paid_at", startThisMonth),
+      .gte("paid_at", startThis)
+      .lt("paid_at", endThis),
     supabase
       .from("ventas_presenciales")
       .select("created_at, total_clp")
-      .gte("created_at", startThisMonth),
+      .gte("created_at", startThis)
+      .lt("created_at", endThis),
   ]);
 
   // ── Compute stats ──
-  const ingresosOnlineMes = (ordersThisMonth ?? []).reduce((s, o) => s + o.total_clp, 0);
-  const ingresosPresencialMes = (ventasThisMonth ?? []).reduce((s, o) => s + o.total_clp, 0);
+  const ingresosOnlineMes = (ordersThis ?? []).reduce((s, o) => s + o.total_clp, 0);
+  const ingresosPresencialMes = (ventasThis ?? []).reduce((s, o) => s + o.total_clp, 0);
   const ingresosTotalMes = ingresosOnlineMes + ingresosPresencialMes;
 
-  const ingresosOnlinePrev = (ordersLastMonth ?? []).reduce((s, o) => s + o.total_clp, 0);
-  const ingresosPresencialPrev = (ventasLastMonth ?? []).reduce((s, o) => s + o.total_clp, 0);
+  const ingresosOnlinePrev = (ordersPrev ?? []).reduce((s, o) => s + o.total_clp, 0);
+  const ingresosPresencialPrev = (ventasPrev ?? []).reduce((s, o) => s + o.total_clp, 0);
   const ingresosPrevMes = ingresosOnlinePrev + ingresosPresencialPrev;
 
   const trendIngresos =
@@ -122,8 +145,8 @@ export default async function DashboardPage() {
       ? Math.round(((ingresosTotalMes - ingresosPrevMes) / ingresosPrevMes) * 100)
       : 0;
 
-  const egresosMes = (egresosThisMonth ?? []).reduce((s, e) => s + e.monto_clp, 0);
-  const egresosPrevMes = (egresosLastMonth ?? []).reduce((s, e) => s + e.monto_clp, 0);
+  const egresosMes = (egresosThis ?? []).reduce((s, e) => s + e.monto_clp, 0);
+  const egresosPrevMes = (egresosPrev ?? []).reduce((s, e) => s + e.monto_clp, 0);
   const trendEgresos =
     egresosPrevMes > 0
       ? Math.round(((egresosMes - egresosPrevMes) / egresosPrevMes) * 100)
@@ -132,8 +155,8 @@ export default async function DashboardPage() {
 
   // ── Build weekly chart data ──
   const weeks = eachWeekOfInterval({
-    start: startOfMonth(now),
-    end: endOfMonth(now),
+    start: startOfMonth(selectedDate),
+    end: endOfMonth(selectedDate),
   });
 
   const chartData: SalesDataPoint[] = weeks.map((weekStart) => {
@@ -161,6 +184,11 @@ export default async function DashboardPage() {
     };
   });
 
+  const monthLabel = format(selectedDate, "MMMM yyyy", { locale: es }).replace(
+    /^\w/,
+    (c) => c.toUpperCase()
+  );
+
   const stats = [
     {
       title: "Ingresos del mes",
@@ -174,7 +202,7 @@ export default async function DashboardPage() {
     {
       title: "Egresos del mes",
       value: formatCLP(egresosMes),
-      subtitle: `${(egresosThisMonth ?? []).length} gastos registrados`,
+      subtitle: `${(egresosThis ?? []).length} gastos registrados`,
       icon: TrendingDown,
       trend: egresosPrevMes > 0 ? trendEgresos : undefined,
       trendLabel: "vs mes anterior",
@@ -196,7 +224,7 @@ export default async function DashboardPage() {
     },
     {
       title: "Ventas presenciales",
-      value: String((ventasThisMonth ?? []).length),
+      value: String((ventasThis ?? []).length),
       subtitle: formatCLP(ingresosPresencialMes) + " este mes",
       icon: ShoppingBag,
       color: "var(--info)",
@@ -226,15 +254,17 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page title */}
-      <div>
-        <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
-          Dashboard
-        </h1>
-        <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
-          Resumen general de FotosMony —{" "}
-          {format(now, "MMMM yyyy", { locale: es }).replace(/^\w/, (c) => c.toUpperCase())}
-        </p>
+      {/* Header + month picker */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>
+            Dashboard
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--text-secondary)" }}>
+            Resumen de FotosMony — {monthLabel}
+          </p>
+        </div>
+        <DashboardMonthPicker selectedMonth={selectedMonth} selectedYear={selectedYear} />
       </div>
 
       {/* Stats grid */}
@@ -253,61 +283,36 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {/* Charts + Recent orders */}
+      {/* Charts + distribution */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {/* Sales chart */}
         <div className="card xl:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
               Ventas del mes
             </h2>
-            <span className="badge badge-gold text-xs">
-              {format(now, "MMMM", { locale: es }).replace(/^\w/, (c) => c.toUpperCase())}
-            </span>
+            <span className="badge badge-gold text-xs">{monthLabel}</span>
           </div>
           <SalesChartWrapper data={chartData} />
         </div>
 
-        {/* Quick stats */}
         <div className="card">
           <h2 className="font-semibold mb-4" style={{ color: "var(--text-primary)" }}>
             Distribución de ingresos
           </h2>
           <div className="space-y-3">
             {[
-              {
-                label: "Ventas online",
-                amount: ingresosOnlineMes,
-                total: ingresosTotalMes,
-                color: "var(--accent)",
-              },
-              {
-                label: "Ventas presenciales",
-                amount: ingresosPresencialMes,
-                total: ingresosTotalMes,
-                color: "var(--info)",
-              },
-              {
-                label: "Egresos",
-                amount: egresosMes,
-                total: Math.max(ingresosTotalMes, egresosMes) || 1,
-                color: "var(--danger)",
-              },
+              { label: "Ventas online", amount: ingresosOnlineMes, total: ingresosTotalMes, color: "var(--accent)" },
+              { label: "Ventas presenciales", amount: ingresosPresencialMes, total: ingresosTotalMes, color: "var(--info)" },
+              { label: "Egresos", amount: egresosMes, total: Math.max(ingresosTotalMes, egresosMes) || 1, color: "var(--danger)" },
             ].map((item) => {
-              const pct =
-                item.total > 0 ? Math.round((item.amount / item.total) * 100) : 0;
+              const pct = item.total > 0 ? Math.round((item.amount / item.total) * 100) : 0;
               return (
                 <div key={item.label}>
                   <div className="flex justify-between text-xs mb-1">
                     <span style={{ color: "var(--text-secondary)" }}>{item.label}</span>
-                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                      {pct}%
-                    </span>
+                    <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{pct}%</span>
                   </div>
-                  <div
-                    className="h-2 rounded-full overflow-hidden"
-                    style={{ background: "var(--border)" }}
-                  >
+                  <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
                     <div
                       className="h-full rounded-full transition-all"
                       style={{ width: `${pct}%`, background: item.color }}
@@ -321,21 +326,14 @@ export default async function DashboardPage() {
             })}
           </div>
 
-          <div
-            className="mt-4 pt-4 space-y-2"
-            style={{ borderTop: "1px solid var(--border)" }}
-          >
+          <div className="mt-4 pt-4 space-y-2" style={{ borderTop: "1px solid var(--border)" }}>
             <p className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>
               ACCIONES RÁPIDAS
             </p>
             <Link
               href="/ventas/nueva"
               className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors"
-              style={{
-                background: "var(--accent-muted)",
-                color: "var(--accent)",
-                border: "1px solid rgba(232,184,75,0.2)",
-              }}
+              style={{ background: "var(--accent-muted)", color: "var(--accent)", border: "1px solid rgba(232,184,75,0.2)" }}
             >
               <ShoppingBag size={14} />
               Registrar venta presencial
@@ -343,11 +341,7 @@ export default async function DashboardPage() {
             <Link
               href="/egresos/nueva"
               className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors"
-              style={{
-                background: "rgba(239,68,68,0.08)",
-                color: "var(--danger)",
-                border: "1px solid rgba(239,68,68,0.2)",
-              }}
+              style={{ background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)" }}
             >
               <TrendingDown size={14} />
               Registrar egreso
@@ -355,11 +349,7 @@ export default async function DashboardPage() {
             <Link
               href="/agenda"
               className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors"
-              style={{
-                background: "rgba(59,130,246,0.1)",
-                color: "var(--info)",
-                border: "1px solid rgba(59,130,246,0.2)",
-              }}
+              style={{ background: "rgba(59,130,246,0.1)", color: "var(--info)", border: "1px solid rgba(59,130,246,0.2)" }}
             >
               <Camera size={14} />
               Nueva sesión en agenda
@@ -368,17 +358,13 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent orders */}
+      {/* Recent orders — always shows latest regardless of selected month */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold" style={{ color: "var(--text-primary)" }}>
             Pedidos recientes
           </h2>
-          <Link
-            href="/pedidos"
-            className="text-xs font-medium"
-            style={{ color: "var(--accent)" }}
-          >
+          <Link href="/pedidos" className="text-xs font-medium" style={{ color: "var(--accent)" }}>
             Ver todos →
           </Link>
         </div>
@@ -400,11 +386,7 @@ export default async function DashboardPage() {
             </thead>
             <tbody>
               {(recentOrders ?? []).map((order) => (
-                <tr
-                  key={order.id}
-                  className="transition-colors"
-                  style={{ borderBottom: "1px solid var(--border)" }}
-                >
+                <tr key={order.id} style={{ borderBottom: "1px solid var(--border)" }}>
                   <td className="px-3 py-2.5">
                     <Link
                       href={`/pedidos/${order.id}`}
