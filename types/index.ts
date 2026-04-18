@@ -150,6 +150,7 @@ export interface VentaPresencial {
 
 export interface VentaPresencialItem {
   id: string;
+  variante_id: string | null;
   venta_id: string;
   servicio_nombre: string;
   cantidad: number;
@@ -216,4 +217,28 @@ export interface SalesDataPoint {
   fecha: string;
   online: number;
   presencial: number;
+}
+
+export interface Producto {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductoVariante {
+  id: string;
+  producto_id: string;
+  nombre: string;
+  precio_clp: number;
+  stock: number | null;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductoWithVariantes extends Producto {
+  producto_variantes: ProductoVariante[];
 }
