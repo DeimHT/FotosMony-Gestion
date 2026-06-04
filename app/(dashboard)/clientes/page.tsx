@@ -13,8 +13,8 @@ export default async function ClientesPage() {
   ] = await Promise.all([
     supabase.from("clientes").select("*").order("nombre"),
     supabase.from("profiles").select("id, full_name, phone, created_at").order("created_at", { ascending: false }),
-    supabase.from("orders").select("user_id, guest_email, total_clp, status, created_at"),
-    supabase.from("ventas_presenciales").select("cliente_nombre, cliente_email, total_clp, estado, created_at"),
+    supabase.from("orders").select("id, user_id, guest_email, total_clp, status, created_at"),
+    supabase.from("ventas_presenciales").select("id, cliente_nombre, cliente_email, total_clp, metodo_pago, notas, estado, created_at"),
     supabase.rpc("get_user_emails"),
   ]);
 

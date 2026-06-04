@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Cliente } from "@/types";
 import { formatDate, formatCLP, getInitials } from "@/lib/utils";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
@@ -16,6 +17,9 @@ import {
   Save,
   UserPlus,
   AlertCircle,
+  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -28,6 +32,7 @@ interface ProfileRow {
 }
 
 interface OrderRow {
+  id: string;
   user_id: string | null;
   guest_email: string | null;
   total_clp: number;
@@ -36,9 +41,12 @@ interface OrderRow {
 }
 
 interface VentaRow {
+  id: string;
   cliente_nombre: string | null;
   cliente_email: string | null;
   total_clp: number;
+  metodo_pago: string;
+  notas: string | null;
   estado: string;
   created_at: string;
 }
@@ -53,6 +61,16 @@ interface ClientesClientProps {
 
 // ─── Unified client view ──────────────────────────────────────────────────────
 
+interface CompraVista {
+  id: string;
+  fecha: string;
+  total: number;
+  estado: string;
+  metodo?: string;
+  notas?: string;
+  fuente: "web" | "presencial";
+}
+
 interface ClienteVista {
   id: string;
   nombre: string;
@@ -60,10 +78,11 @@ interface ClienteVista {
   telefono: string;
   compras: number;
   totalGastado: number;
-  deudaFiado: number; // total de ventas con estado "fiado"
+  deudaFiado: number;
   tipo: "web" | "presencial" | "gestion";
   fechaRegistro: string;
-  dbId?: string; // only for "gestion" type
+  dbId?: string;
+  historial: CompraVista[];
 }
 
 // ─── Empty form ───────────────────────────────────────────────────────────────
@@ -79,6 +98,7 @@ export default function ClientesClient({
   ventas,
   emailMap,
 }: ClientesClientProps) {
+  const router = useRouter();
   const [clientes, setClientes] = useState<Cliente[]>(initialClientes);
   const [busqueda, setBusqueda] = useState("");
   const [filtroTipo, setFiltroTipo] = useState<"all" | "web" | "presencial" | "gestion">("all");
@@ -89,19 +109,31 @@ export default function ClientesClient({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState<ClienteVista | null>(null);
+  const [historialPage, setHistorialPage] = useState(0);
+  const [clientesPage, setClientesPage] = useState(0);
+  const [sortField, setSortField] = useState<"compras" | "totalGastado" | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   // Panel de edición inline (derecha)
   const [panelForm, setPanelForm] = useState(EMPTY_FORM);
-  const [panelEditing, setPanelEditing] = useState(false);   // true = mostrando form editable
+  const [panelEditing, setPanelEditing] = useState(false);
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [panelSaved, setPanelSaved] = useState(false);
 
   // ── Build unified list ──────────────────────────────────────────────────────
 
+  // Emails de usuarios registrados — se usan para deduplicar gestión
+  const webEmails = new Set(Object.values(emailMap).map((e) => e.toLowerCase()).filter(Boolean));
+
   const webVistas: ClienteVista[] = profiles.map((p) => {
-    const userOrders = orders.filter((o) => o.user_id === p.id && o.status === "paid");
     const email = emailMap[p.id] ?? "";
+    // Incluye pedidos por user_id Y pedidos guest con el mismo email
+    const userOrders = orders.filter(
+      (o) =>
+        o.status === "paid" &&
+        (o.user_id === p.id || (email && o.guest_email?.toLowerCase() === email.toLowerCase()))
+    );
     return {
       id: `web-${p.id}`,
       nombre: p.full_name || email.split("@")[0] || "Sin nombre",
@@ -112,26 +144,39 @@ export default function ClientesClient({
       deudaFiado: 0,
       tipo: "web",
       fechaRegistro: p.created_at,
+      historial: userOrders
+        .map((o) => ({ id: o.id, fecha: o.created_at, total: o.total_clp, estado: o.status, fuente: "web" as const }))
+        .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()),
     };
   });
 
-  const gestionVistas: ClienteVista[] = clientes.map((c) => {
+  // Excluir clientes de gestión cuyo email ya corresponde a un usuario web registrado
+  const gestionVistas: ClienteVista[] = clientes.filter((c) => !c.email || !webEmails.has(c.email.toLowerCase())).map((c) => {
     const ventasCliente = ventas.filter(
       (v) =>
-        v.cliente_email === c.email ||
+        (c.email && v.cliente_email && v.cliente_email.toLowerCase() === c.email.toLowerCase()) ||
         v.cliente_nombre?.toLowerCase() === c.nombre.toLowerCase()
     );
+    // Pedidos online (guest) que coinciden por email
+    const pedidosOnline = c.email
+      ? orders.filter((o) => o.guest_email?.toLowerCase() === c.email!.toLowerCase() && o.status === "paid")
+      : [];
+    const historial: CompraVista[] = [
+      ...ventasCliente.map((v) => ({ id: v.id, fecha: v.created_at, total: v.total_clp, estado: v.estado, metodo: v.metodo_pago, notas: v.notas || undefined, fuente: "presencial" as const })),
+      ...pedidosOnline.map((o) => ({ id: o.id, fecha: o.created_at, total: o.total_clp, estado: o.status, fuente: "web" as const })),
+    ].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
     return {
       id: `gest-${c.id}`,
       nombre: c.nombre,
       email: c.email || "",
       telefono: c.telefono || "",
-      compras: ventasCliente.length,
-      totalGastado: ventasCliente.reduce((s, v) => s + v.total_clp, 0),
+      compras: ventasCliente.length + pedidosOnline.length,
+      totalGastado: ventasCliente.reduce((s, v) => s + v.total_clp, 0) + pedidosOnline.reduce((s, o) => s + o.total_clp, 0),
       deudaFiado: ventasCliente.filter((v) => v.estado === "fiado").reduce((s, v) => s + v.total_clp, 0),
       tipo: "gestion",
       fechaRegistro: c.created_at,
       dbId: c.id,
+      historial,
     };
   });
 
@@ -147,23 +192,26 @@ export default function ClientesClient({
       gestionNombres.has(v.cliente_nombre.toLowerCase())
     )
       return;
+    const compra: CompraVista = { id: v.id, fecha: v.created_at, total: v.total_clp, estado: v.estado, metodo: v.metodo_pago, notas: v.notas || undefined, fuente: "presencial" };
     const existing = presMap.get(key);
-      if (existing) {
-        existing.compras += 1;
-        existing.totalGastado += v.total_clp;
-        if (v.estado === "fiado") existing.deudaFiado += v.total_clp;
+    if (existing) {
+      existing.compras += 1;
+      existing.totalGastado += v.total_clp;
+      if (v.estado === "fiado") existing.deudaFiado += v.total_clp;
+      existing.historial.push(compra);
     } else {
       presMap.set(key, {
-          id: `pres-${key}`,
-          nombre: v.cliente_nombre,
-          email: v.cliente_email || "",
-          telefono: "",
-          compras: 1,
-          totalGastado: v.total_clp,
-          deudaFiado: v.estado === "fiado" ? v.total_clp : 0,
-          tipo: "presencial",
-          fechaRegistro: v.created_at,
-        });
+        id: `pres-${key}`,
+        nombre: v.cliente_nombre,
+        email: v.cliente_email || "",
+        telefono: "",
+        compras: 1,
+        totalGastado: v.total_clp,
+        deudaFiado: v.estado === "fiado" ? v.total_clp : 0,
+        tipo: "presencial",
+        fechaRegistro: v.created_at,
+        historial: [compra],
+      });
     }
   });
   const presVistas = Array.from(presMap.values());
@@ -178,6 +226,27 @@ export default function ClientesClient({
     const t = busqueda.toLowerCase();
     return c.nombre.toLowerCase().includes(t) || c.email.toLowerCase().includes(t);
   });
+
+  const sorted = sortField
+    ? [...filtered].sort((a, b) => {
+        const diff = a[sortField] - b[sortField];
+        return sortDir === "asc" ? diff : -diff;
+      })
+    : filtered;
+
+  function toggleSort(field: "compras" | "totalGastado") {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("desc");
+    }
+    setClientesPage(0);
+  }
+
+  const CLIENTES_PAGE_SIZE = 10;
+  const clientesTotalPages = Math.ceil(sorted.length / CLIENTES_PAGE_SIZE);
+  const clientesPaginated = sorted.slice(clientesPage * CLIENTES_PAGE_SIZE, (clientesPage + 1) * CLIENTES_PAGE_SIZE);
 
   // ── CRUD ────────────────────────────────────────────────────────────────────
 
@@ -198,6 +267,7 @@ export default function ClientesClient({
       return;
     }
     setSelectedCliente(c);
+    setHistorialPage(0);
     setPanelError(null);
     setPanelSaved(false);
     // Pre-llenar panel con datos disponibles
@@ -382,7 +452,7 @@ export default function ClientesClient({
         ].map((s) => (
           <button
             key={s.key}
-            onClick={() => setFiltroTipo(s.key as typeof filtroTipo)}
+            onClick={() => { setFiltroTipo(s.key as typeof filtroTipo); setClientesPage(0); }}
             className="card text-left transition-all"
             style={{
               borderLeft: `3px solid ${filtroTipo === s.key ? s.color : "var(--border)"}`,
@@ -411,13 +481,13 @@ export default function ClientesClient({
             <input
               type="text"
               value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
+              onChange={(e) => { setBusqueda(e.target.value); setClientesPage(0); }}
               placeholder="Buscar por nombre o email..."
               className="bg-transparent outline-none text-sm flex-1"
               style={{ color: "var(--text-primary)" }}
             />
             {busqueda && (
-              <button onClick={() => setBusqueda("")} style={{ color: "var(--text-muted)" }}>
+              <button onClick={() => { setBusqueda(""); setClientesPage(0); }} style={{ color: "var(--text-muted)" }}>
                 <X size={14} />
               </button>
             )}
@@ -434,19 +504,34 @@ export default function ClientesClient({
                       background: "rgba(0,0,0,0.2)",
                     }}
                   >
-                    {["Cliente", "Tipo", "Compras", "Total", "Registro", ""].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider"
-                        style={{ color: "var(--text-muted)" }}
-                      >
+                    {["Cliente", "Tipo"].map((h) => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                        {h}
+                      </th>
+                    ))}
+                    {(["compras", "totalGastado"] as const).map((field) => (
+                      <th key={field} className="text-left px-4 py-3">
+                        <button
+                          onClick={() => toggleSort(field)}
+                          className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider"
+                          style={{ color: sortField === field ? "var(--accent)" : "var(--text-muted)" }}
+                        >
+                          {field === "compras" ? "Compras" : "Total"}
+                          <span className="text-[10px]">
+                            {sortField === field ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+                          </span>
+                        </button>
+                      </th>
+                    ))}
+                    {["Registro", ""].map((h) => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
                         {h}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((c) => (
+                  {clientesPaginated.map((c) => (
                     <tr
                       key={c.id}
                       className="transition-colors cursor-pointer"
@@ -540,6 +625,49 @@ export default function ClientesClient({
                 </div>
               )}
             </div>
+
+            {/* Paginación */}
+            {clientesTotalPages > 1 && (
+              <div
+                className="flex items-center justify-between px-4 py-3"
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {clientesPage * CLIENTES_PAGE_SIZE + 1}–{Math.min((clientesPage + 1) * CLIENTES_PAGE_SIZE, sorted.length)} de {sorted.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setClientesPage((p) => Math.max(0, p - 1))}
+                    disabled={clientesPage === 0}
+                    className="p-1.5 rounded-lg disabled:opacity-30 transition-opacity"
+                    style={{ color: "var(--text-secondary)", background: "var(--bg-primary)" }}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  {Array.from({ length: clientesTotalPages }, (_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setClientesPage(i)}
+                      className="w-7 h-7 rounded-lg text-xs font-medium transition-all"
+                      style={{
+                        background: clientesPage === i ? "var(--accent)" : "var(--bg-primary)",
+                        color: clientesPage === i ? "#0D0D14" : "var(--text-secondary)",
+                      }}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setClientesPage((p) => Math.min(clientesTotalPages - 1, p + 1))}
+                    disabled={clientesPage === clientesTotalPages - 1}
+                    className="p-1.5 rounded-lg disabled:opacity-30 transition-opacity"
+                    style={{ color: "var(--text-secondary)", background: "var(--bg-primary)" }}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -609,6 +737,94 @@ export default function ClientesClient({
                   </span>
                 </div>
               )}
+
+              {/* Historial de compras */}
+              {selectedCliente.historial.length > 0 && (() => {
+                const PAGE_SIZE = 5;
+                const totalPages = Math.ceil(selectedCliente.historial.length / PAGE_SIZE);
+                const paginated = selectedCliente.historial.slice(historialPage * PAGE_SIZE, (historialPage + 1) * PAGE_SIZE);
+                return (
+                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: "12px" }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                        Historial de compras
+                      </p>
+                      {totalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setHistorialPage((p) => Math.max(0, p - 1))}
+                            disabled={historialPage === 0}
+                            className="p-0.5 rounded disabled:opacity-30"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            <ChevronLeft size={14} />
+                          </button>
+                          <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                            {historialPage + 1}/{totalPages}
+                          </span>
+                          <button
+                            onClick={() => setHistorialPage((p) => Math.min(totalPages - 1, p + 1))}
+                            disabled={historialPage === totalPages - 1}
+                            className="p-0.5 rounded disabled:opacity-30"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr style={{ background: "rgba(0,0,0,0.2)", borderBottom: "1px solid var(--border)" }}>
+                            <th className="text-left px-3 py-2 font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Fecha</th>
+                            <th className="text-right px-3 py-2 font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Total</th>
+                            <th className="text-center px-3 py-2 font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Estado</th>
+                            {selectedCliente.tipo !== "web" && (
+                              <th className="px-3 py-2" />
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginated.map((compra) => (
+                            <tr key={compra.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                              <td className="px-3 py-2" style={{ color: "var(--text-secondary)" }}>
+                                {formatDate(compra.fecha)}
+                              </td>
+                              <td className="px-3 py-2 text-right font-semibold" style={{ color: "var(--accent)" }}>
+                                {formatCLP(compra.total)}
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{
+                                    background: compra.estado === "fiado" ? "rgba(239,68,68,0.12)" : "rgba(34,197,94,0.12)",
+                                    color: compra.estado === "fiado" ? "var(--danger)" : "var(--success)",
+                                  }}
+                                >
+                                  {compra.estado === "fiado" ? "Fiado" : "Pagado"}
+                                </span>
+                              </td>
+                              {selectedCliente.tipo !== "web" && (
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    onClick={() => router.push(`/ventas/${compra.id}`)}
+                                    className="p-1 rounded hover:opacity-80"
+                                    style={{ color: "var(--accent)" }}
+                                    title="Ver detalle"
+                                  >
+                                    <ExternalLink size={12} />
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Formulario editable */}
               <div
